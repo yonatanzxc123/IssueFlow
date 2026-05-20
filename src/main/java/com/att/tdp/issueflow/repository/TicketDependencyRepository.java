@@ -1,6 +1,7 @@
 package com.att.tdp.issueflow.repository;
 
 import com.att.tdp.issueflow.domain.TicketDependency;
+import com.att.tdp.issueflow.domain.enums.TicketStatus;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,5 +12,5 @@ public interface TicketDependencyRepository extends JpaRepository<TicketDependen
 
     Optional<TicketDependency> findByTicketIdAndBlockerTicketId(Long ticketId, Long blockerTicketId);
 
-    boolean existsByTicketIdAndBlockerTicketStatusNot(Long ticketId, com.att.tdp.issueflow.domain.enums.TicketStatus status);
+    boolean existsByTicketIdAndBlockerTicketStatusNot(Long ticketId, TicketStatus status);
 }
