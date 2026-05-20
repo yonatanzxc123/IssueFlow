@@ -1,6 +1,7 @@
 package com.att.tdp.issueflow.domain;
 
 import com.att.tdp.issueflow.domain.enums.Role;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -32,6 +33,7 @@ public class User extends AuditableEntity {
     private Role role;
 
     @Column(name = "password_hash", length = 255)
+    @JsonIgnore
     private String passwordHash;
 
     public Long getId() {
