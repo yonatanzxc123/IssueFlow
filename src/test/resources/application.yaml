@@ -12,6 +12,7 @@ spring:
   sql:
     init:
       platform: mssql
+      mode: never
   h2:
     console:
       enabled: true

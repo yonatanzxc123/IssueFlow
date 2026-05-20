@@ -1,3 +1,2 @@
-CREATE TABLE IF NOT EXISTS task (
-                                    description VARCHAR(64) NOT NULL,
-    completed   VARCHAR(30) NOT NULL);
+-- Schema is managed by JPA/Hibernate during development.
+-- Keep this file intentionally empty so no unrelated demo tables are created.

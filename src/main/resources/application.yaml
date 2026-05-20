@@ -17,7 +17,7 @@ spring:
       ddl-auto: update
   sql:
     init:
-      mode: always
+      mode: never
   servlet:
     multipart:
       max-file-size: 10MB
