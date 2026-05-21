@@ -19,6 +19,7 @@ import com.att.tdp.issueflow.repository.CommentRepository;
 import com.att.tdp.issueflow.repository.MentionRepository;
 import com.att.tdp.issueflow.repository.ProjectRepository;
 import com.att.tdp.issueflow.repository.RevokedTokenRepository;
+import com.att.tdp.issueflow.repository.TicketDependencyRepository;
 import com.att.tdp.issueflow.repository.TicketRepository;
 import com.att.tdp.issueflow.repository.UserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,6 +45,7 @@ class IssueFlowApplicationTests {
     private final TicketRepository ticketRepository;
     private final CommentRepository commentRepository;
     private final MentionRepository mentionRepository;
+    private final TicketDependencyRepository ticketDependencyRepository;
     private final AuditLogRepository auditLogRepository;
     private final RevokedTokenRepository revokedTokenRepository;
     private final PasswordEncoder passwordEncoder;
@@ -57,6 +59,7 @@ class IssueFlowApplicationTests {
             TicketRepository ticketRepository,
             CommentRepository commentRepository,
             MentionRepository mentionRepository,
+            TicketDependencyRepository ticketDependencyRepository,
             AuditLogRepository auditLogRepository,
             RevokedTokenRepository revokedTokenRepository,
             PasswordEncoder passwordEncoder
@@ -68,6 +71,7 @@ class IssueFlowApplicationTests {
         this.ticketRepository = ticketRepository;
         this.commentRepository = commentRepository;
         this.mentionRepository = mentionRepository;
+        this.ticketDependencyRepository = ticketDependencyRepository;
         this.auditLogRepository = auditLogRepository;
         this.revokedTokenRepository = revokedTokenRepository;
         this.passwordEncoder = passwordEncoder;
@@ -78,6 +82,7 @@ class IssueFlowApplicationTests {
         auditLogRepository.deleteAll();
         mentionRepository.deleteAll();
         commentRepository.deleteAll();
+        ticketDependencyRepository.deleteAll();
         ticketRepository.deleteAll();
         projectRepository.deleteAll();
         revokedTokenRepository.deleteAll();
@@ -804,6 +809,207 @@ class IssueFlowApplicationTests {
         );
     }
 
+    @Test
+    void addDependencyBetweenTicketsInSameProjectSucceeds() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Dependency Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long blockerId = createTicket(token, projectId, owner.getId(), "IN_PROGRESS");
+
+        mockMvc.perform(post("/tickets/{ticketId}/dependencies", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "blockedBy": %d
+                                }
+                                """.formatted(blockerId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(blockerId))
+                .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
+    }
+
+    @Test
+    void listDependenciesReturnsBlocker() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "List Dependencies Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long blockerId = createTicket(token, projectId, owner.getId(), "TODO");
+        addDependency(token, ticketId, blockerId);
+
+        mockMvc.perform(get("/tickets/{ticketId}/dependencies", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(blockerId))
+                .andExpect(jsonPath("$[0].title").value("Test ticket"))
+                .andExpect(jsonPath("$[0].status").value("TODO"));
+    }
+
+    @Test
+    void removeDependencySucceeds() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Remove Dependency Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long blockerId = createTicket(token, projectId, owner.getId(), "TODO");
+        addDependency(token, ticketId, blockerId);
+
+        mockMvc.perform(delete("/tickets/{ticketId}/dependencies/{blockerId}", ticketId, blockerId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(ticketDependencyRepository.findByTicketIdAndBlockerTicketId(ticketId, blockerId)).isEmpty();
+    }
+
+    @Test
+    void selfDependencyFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Self Dependency Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(post("/tickets/{ticketId}/dependencies", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "blockedBy": %d
+                                }
+                                """.formatted(ticketId)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void duplicateDependencyFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Duplicate Dependency Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long blockerId = createTicket(token, projectId, owner.getId(), "TODO");
+        addDependency(token, ticketId, blockerId);
+
+        mockMvc.perform(post("/tickets/{ticketId}/dependencies", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "blockedBy": %d
+                                }
+                                """.formatted(blockerId)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void crossProjectDependencyFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long firstProjectId = createProject(token, owner.getId(), "First Dependency Project");
+        long secondProjectId = createProject(token, owner.getId(), "Second Dependency Project");
+        long ticketId = createTicket(token, firstProjectId, owner.getId(), "TODO");
+        long blockerId = createTicket(token, secondProjectId, owner.getId(), "TODO");
+
+        mockMvc.perform(post("/tickets/{ticketId}/dependencies", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "blockedBy": %d
+                                }
+                                """.formatted(blockerId)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void missingBlockerFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Missing Blocker Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(post("/tickets/{ticketId}/dependencies", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "blockedBy": 9999
+                                }
+                                """))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void ticketCannotTransitionToDoneWhileBlockerIsUnresolved() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Blocked Done Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "IN_REVIEW");
+        long blockerId = createTicket(token, projectId, owner.getId(), "TODO");
+        addDependency(token, ticketId, blockerId);
+
+        mockMvc.perform(patch("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "DONE"
+                                }
+                                """))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void ticketCanTransitionToDoneAfterBlockerIsDone() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Unblocked Done Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "IN_REVIEW");
+        long blockerId = createTicket(token, projectId, owner.getId(), "DONE");
+        addDependency(token, ticketId, blockerId);
+
+        mockMvc.perform(patch("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "DONE"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DONE"));
+    }
+
+    @Test
+    void addAndRemoveDependencyActionsWriteAuditLog() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Audited Dependency Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long blockerId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        long dependencyId = addDependency(token, ticketId, blockerId);
+        mockMvc.perform(delete("/tickets/{ticketId}/dependencies/{blockerId}", ticketId, blockerId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        List<AuditAction> actions = auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.TICKET_DEPENDENCY, dependencyId)
+                .stream()
+                .map(log -> log.getAction())
+                .toList();
+
+        assertThat(actions).contains(
+                AuditAction.ADD_DEPENDENCY,
+                AuditAction.REMOVE_DEPENDENCY
+        );
+    }
+
     private User createUser(String username, String email, String password) throws Exception {
         return createUser(username, email, password, "DEVELOPER");
     }
@@ -900,5 +1106,21 @@ class IssueFlowApplicationTests {
                 .getContentAsString();
 
         return objectMapper.readTree(response).get("id").asLong();
+    }
+
+    private long addDependency(String token, Long ticketId, Long blockerId) throws Exception {
+        mockMvc.perform(post("/tickets/{ticketId}/dependencies", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "blockedBy": %d
+                                }
+                                """.formatted(blockerId)))
+                .andExpect(status().isOk());
+
+        return ticketDependencyRepository.findByTicketIdAndBlockerTicketId(ticketId, blockerId)
+                .orElseThrow()
+                .getId();
     }
 }
