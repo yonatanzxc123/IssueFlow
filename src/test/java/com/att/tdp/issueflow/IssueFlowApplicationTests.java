@@ -5,12 +5,15 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.att.tdp.issueflow.domain.Ticket;
 import com.att.tdp.issueflow.domain.User;
 import com.att.tdp.issueflow.domain.enums.ActorType;
 import com.att.tdp.issueflow.domain.enums.AuditAction;
@@ -25,13 +28,20 @@ import com.att.tdp.issueflow.repository.TicketRepository;
 import com.att.tdp.issueflow.repository.UserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -1196,6 +1206,208 @@ class IssueFlowApplicationTests {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.assigneeId").value(developer.getId()));
+    }
+
+    @Test
+    void exportTicketsReturnsCsvWithRequiredHeaderVisibleTicketsAndEscapedValues() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "CSV Export Project");
+        long otherProjectId = createProject(token, owner.getId(), "Other CSV Export Project");
+        long exportedTicketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long deletedTicketId = createTicket(token, projectId, owner.getId(), "TODO");
+        createTicket(token, otherProjectId, owner.getId(), "TODO");
+
+        Ticket exportedTicket = ticketRepository.findById(exportedTicketId).orElseThrow();
+        exportedTicket.setTitle("Login, \"breaks\"\nagain");
+        exportedTicket.setDescription("First line\nSecond, \"quoted\"");
+        ticketRepository.save(exportedTicket);
+
+        mockMvc.perform(delete("/tickets/{ticketId}", deletedTicketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        String csv = mockMvc.perform(get("/tickets/export")
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(new MediaType("text", "csv")))
+                .andExpect(header().string(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        containsString("tickets-project-" + projectId + ".csv")
+                ))
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(csv).startsWith("id,title,description,status,priority,type,assigneeId");
+        List<CSVRecord> records = parseCsvRecords(csv);
+        assertThat(records).hasSize(1);
+        assertThat(records.getFirst().get("id")).isEqualTo(String.valueOf(exportedTicketId));
+        assertThat(records.getFirst().get("title")).isEqualTo("Login, \"breaks\"\nagain");
+        assertThat(records.getFirst().get("description")).isEqualTo("First line\nSecond, \"quoted\"");
+    }
+
+    @Test
+    void importValidCsvCreatesTicketsAndIgnoresCsvIds() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User assignee = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "CSV Import Project");
+
+        mockMvc.perform(multipart("/tickets/import")
+                        .file(csvFile("""
+                                id,title,description,status,priority,type,assigneeId
+                                999999,Imported one,First import,TODO,LOW,BUG,%d
+                                123456,Imported two,,IN_PROGRESS,HIGH,FEATURE,%d
+                                """.formatted(assignee.getId(), assignee.getId())))
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(2))
+                .andExpect(jsonPath("$.failed").value(0))
+                .andExpect(jsonPath("$.errors.length()").value(0));
+
+        List<Ticket> tickets = ticketRepository.findByProjectIdAndDeletedFalseOrderByIdAsc(projectId);
+        assertThat(tickets).extracting(Ticket::getTitle).containsExactly("Imported one", "Imported two");
+        assertThat(tickets).extracting(Ticket::getId).doesNotContain(999999L, 123456L);
+    }
+
+    @Test
+    void importInvalidRowContinuesProcessingAndReportsRowError() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User assignee = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "CSV Partial Import Project");
+
+        mockMvc.perform(multipart("/tickets/import")
+                        .file(csvFile("""
+                                id,title,description,status,priority,type,assigneeId
+                                1,,Missing title,TODO,LOW,BUG,%d
+                                2,Valid after bad,Created later,IN_REVIEW,MEDIUM,TECHNICAL,%d
+                                """.formatted(assignee.getId(), assignee.getId())))
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(1))
+                .andExpect(jsonPath("$.failed").value(1))
+                .andExpect(jsonPath("$.errors[0]").value(containsString("Row 2")))
+                .andExpect(jsonPath("$.errors[0]").value(containsString("title is required")));
+
+        assertThat(ticketRepository.findByProjectIdAndDeletedFalseOrderByIdAsc(projectId))
+                .extracting(Ticket::getTitle)
+                .containsExactly("Valid after bad");
+    }
+
+    @Test
+    void importValidatesBadEnumValues() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User assignee = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "CSV Bad Enum Project");
+
+        mockMvc.perform(multipart("/tickets/import")
+                        .file(csvFile("""
+                                id,title,description,status,priority,type,assigneeId
+                                1,Bad status,Invalid enum,WIP,LOW,BUG,%d
+                                """.formatted(assignee.getId())))
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(0))
+                .andExpect(jsonPath("$.failed").value(1))
+                .andExpect(jsonPath("$.errors[0]").value(containsString("status has invalid value")));
+    }
+
+    @Test
+    void importValidatesMissingAssignee() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "CSV Missing Assignee Project");
+
+        mockMvc.perform(multipart("/tickets/import")
+                        .file(csvFile("""
+                                id,title,description,status,priority,type,assigneeId
+                                1,Missing assignee,No user,TODO,LOW,BUG,999999
+                                """))
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(0))
+                .andExpect(jsonPath("$.failed").value(1))
+                .andExpect(jsonPath("$.errors[0]").value(containsString("User not found")));
+    }
+
+    @Test
+    void importWithEmptyAssigneeTriggersAutoAssignment() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User developer = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "CSV Auto Assign Project");
+
+        mockMvc.perform(multipart("/tickets/import")
+                        .file(csvFile("""
+                                id,title,description,status,priority,type,assigneeId
+                                1,Auto assigned,Empty assignee,TODO,MEDIUM,FEATURE,
+                                """))
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(1))
+                .andExpect(jsonPath("$.failed").value(0));
+
+        Ticket importedTicket = ticketRepository.findByProjectIdAndDeletedFalseOrderByIdAsc(projectId).getFirst();
+        assertThat(importedTicket.getAssignee().getId()).isEqualTo(developer.getId());
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.TICKET, importedTicket.getId()))
+                .anySatisfy(log -> {
+                    assertThat(log.getAction()).isEqualTo(AuditAction.AUTO_ASSIGN);
+                    assertThat(log.getActor()).isEqualTo(ActorType.SYSTEM);
+                });
+    }
+
+    @Test
+    void importActionWritesProjectAuditLog() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User assignee = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "CSV Import Audit Project");
+
+        mockMvc.perform(multipart("/tickets/import")
+                        .file(csvFile("""
+                                id,title,description,status,priority,type,assigneeId
+                                1,Audited import,Audit me,TODO,HIGH,BUG,%d
+                                """.formatted(assignee.getId())))
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.PROJECT, projectId))
+                .anySatisfy(log -> {
+                    assertThat(log.getAction()).isEqualTo(AuditAction.IMPORT);
+                    assertThat(log.getActor()).isEqualTo(ActorType.USER);
+                    assertThat(log.getPerformedBy().getId()).isEqualTo(admin.getId());
+                });
+    }
+
+    private MockMultipartFile csvFile(String content) {
+        return new MockMultipartFile(
+                "file",
+                "tickets.csv",
+                "text/csv",
+                content.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    private List<CSVRecord> parseCsvRecords(String csv) throws Exception {
+        try (CSVParser parser = CSVFormat.DEFAULT.builder()
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .build()
+                .parse(new StringReader(csv))) {
+            return parser.getRecords();
+        }
     }
 
     private User createUser(String username, String email, String password) throws Exception {

@@ -30,6 +30,11 @@ public class AuditLogService {
     }
 
     @Transactional
+    public void recordImportAction(Long projectId) {
+        recordAction(AuditAction.IMPORT, AuditEntityType.PROJECT, projectId);
+    }
+
+    @Transactional
     public void recordTicketAction(AuditAction action, Long ticketId) {
         recordAction(action, AuditEntityType.TICKET, ticketId, ActorType.USER, currentUserOrNull());
     }
