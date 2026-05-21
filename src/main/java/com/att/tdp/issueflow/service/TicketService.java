@@ -9,6 +9,7 @@ import com.att.tdp.issueflow.domain.enums.TicketStatus;
 import com.att.tdp.issueflow.exception.ConflictException;
 import com.att.tdp.issueflow.exception.ResourceNotFoundException;
 import com.att.tdp.issueflow.repository.ProjectRepository;
+import com.att.tdp.issueflow.repository.TicketDependencyRepository;
 import com.att.tdp.issueflow.repository.TicketRepository;
 import com.att.tdp.issueflow.web.dto.request.CreateTicketRequest;
 import com.att.tdp.issueflow.web.dto.request.UpdateTicketRequest;
@@ -24,17 +25,20 @@ public class TicketService {
 
     private final TicketRepository ticketRepository;
     private final ProjectRepository projectRepository;
+    private final TicketDependencyRepository ticketDependencyRepository;
     private final UserService userService;
     private final AuditLogService auditLogService;
 
     public TicketService(
             TicketRepository ticketRepository,
             ProjectRepository projectRepository,
+            TicketDependencyRepository ticketDependencyRepository,
             UserService userService,
             AuditLogService auditLogService
     ) {
         this.ticketRepository = ticketRepository;
         this.projectRepository = projectRepository;
+        this.ticketDependencyRepository = ticketDependencyRepository;
         this.userService = userService;
         this.auditLogService = auditLogService;
     }
@@ -85,7 +89,7 @@ public class TicketService {
             ticket.setDescription(request.description());
         }
         if (request.status() != null) {
-            validateStatusTransition(ticket.getStatus(), request.status());
+            validateStatusTransition(ticket, request.status());
             ticket.setStatus(request.status());
         }
         if (request.priority() != null) {
@@ -162,9 +166,13 @@ public class TicketService {
         }
     }
 
-    private void validateStatusTransition(TicketStatus currentStatus, TicketStatus requestedStatus) {
+    private void validateStatusTransition(Ticket ticket, TicketStatus requestedStatus) {
+        TicketStatus currentStatus = ticket.getStatus();
         if (lifecycleRank(requestedStatus) < lifecycleRank(currentStatus)) {
             throw new ConflictException("Ticket status cannot move backward");
+        }
+        if (requestedStatus == TicketStatus.DONE && hasUnresolvedBlockers(ticket)) {
+            throw new ConflictException("Ticket cannot transition to DONE while blockers are unresolved");
         }
     }
 
@@ -182,5 +190,9 @@ public class TicketService {
             ticket.setPriority(requestedPriority);
             ticket.setOverdue(false);
         }
+    }
+
+    private boolean hasUnresolvedBlockers(Ticket ticket) {
+        return ticketDependencyRepository.existsByTicketIdAndBlockerTicketStatusNot(ticket.getId(), TicketStatus.DONE);
     }
 }
