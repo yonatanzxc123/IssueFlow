@@ -54,6 +54,11 @@ public class AuditLogService {
         recordAction(action, AuditEntityType.TICKET_DEPENDENCY, dependencyId);
     }
 
+    @Transactional
+    public void recordAttachmentAction(AuditAction action, Long attachmentId) {
+        recordAction(action, AuditEntityType.ATTACHMENT, attachmentId);
+    }
+
     private void recordAction(AuditAction action, AuditEntityType entityType, Long entityId) {
         recordAction(action, entityType, entityId, ActorType.USER, currentUserOrNull());
     }

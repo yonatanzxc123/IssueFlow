@@ -13,11 +13,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.att.tdp.issueflow.domain.Attachment;
 import com.att.tdp.issueflow.domain.Ticket;
 import com.att.tdp.issueflow.domain.User;
 import com.att.tdp.issueflow.domain.enums.ActorType;
 import com.att.tdp.issueflow.domain.enums.AuditAction;
 import com.att.tdp.issueflow.domain.enums.AuditEntityType;
+import com.att.tdp.issueflow.repository.AttachmentRepository;
 import com.att.tdp.issueflow.repository.AuditLogRepository;
 import com.att.tdp.issueflow.repository.CommentRepository;
 import com.att.tdp.issueflow.repository.MentionRepository;
@@ -56,6 +58,7 @@ class IssueFlowApplicationTests {
     private final TicketRepository ticketRepository;
     private final CommentRepository commentRepository;
     private final MentionRepository mentionRepository;
+    private final AttachmentRepository attachmentRepository;
     private final TicketDependencyRepository ticketDependencyRepository;
     private final AuditLogRepository auditLogRepository;
     private final RevokedTokenRepository revokedTokenRepository;
@@ -70,6 +73,7 @@ class IssueFlowApplicationTests {
             TicketRepository ticketRepository,
             CommentRepository commentRepository,
             MentionRepository mentionRepository,
+            AttachmentRepository attachmentRepository,
             TicketDependencyRepository ticketDependencyRepository,
             AuditLogRepository auditLogRepository,
             RevokedTokenRepository revokedTokenRepository,
@@ -82,6 +86,7 @@ class IssueFlowApplicationTests {
         this.ticketRepository = ticketRepository;
         this.commentRepository = commentRepository;
         this.mentionRepository = mentionRepository;
+        this.attachmentRepository = attachmentRepository;
         this.ticketDependencyRepository = ticketDependencyRepository;
         this.auditLogRepository = auditLogRepository;
         this.revokedTokenRepository = revokedTokenRepository;
@@ -94,6 +99,7 @@ class IssueFlowApplicationTests {
         mentionRepository.deleteAll();
         commentRepository.deleteAll();
         ticketDependencyRepository.deleteAll();
+        attachmentRepository.deleteAll();
         ticketRepository.deleteAll();
         projectRepository.deleteAll();
         revokedTokenRepository.deleteAll();
@@ -1391,6 +1397,168 @@ class IssueFlowApplicationTests {
                 });
     }
 
+    @Test
+    void attachmentEndpointsRequireJwt() throws Exception {
+        mockMvc.perform(multipart("/tickets/{ticketId}/attachments", 1L)
+                        .file(attachmentFile("note.txt", "text/plain", "hello".getBytes(StandardCharsets.UTF_8))))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(delete("/tickets/{ticketId}/attachments/{attachmentId}", 1L, 1L))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void uploadValidTextPlainAttachmentSucceedsAndStoresContentInDatabase() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Attachment Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        byte[] content = "hello attachment".getBytes(StandardCharsets.UTF_8);
+
+        String response = mockMvc.perform(multipart("/tickets/{ticketId}/attachments", ticketId)
+                        .file(attachmentFile("../notes.txt", "text/plain", content))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ticketId").value(ticketId))
+                .andExpect(jsonPath("$.filename").value("notes.txt"))
+                .andExpect(jsonPath("$.contentType").value("text/plain"))
+                .andExpect(jsonPath("$.sizeBytes").value(content.length))
+                .andExpect(jsonPath("$.content").doesNotExist())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        long attachmentId = objectMapper.readTree(response).get("id").asLong();
+        Attachment attachment = attachmentRepository.findById(attachmentId).orElseThrow();
+        assertThat(attachment.getContent()).isEqualTo(content);
+    }
+
+    @Test
+    void uploadValidPdfAttachmentSucceeds() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "PDF Attachment Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(multipart("/tickets/{ticketId}/attachments", ticketId)
+                        .file(attachmentFile("sample.pdf", "application/pdf", "%PDF-1.4".getBytes(StandardCharsets.UTF_8)))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.filename").value("sample.pdf"))
+                .andExpect(jsonPath("$.contentType").value("application/pdf"));
+    }
+
+    @Test
+    void uploadMissingOrEmptyAttachmentFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Empty Attachment Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(multipart("/tickets/{ticketId}/attachments", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("required")));
+
+        mockMvc.perform(multipart("/tickets/{ticketId}/attachments", ticketId)
+                        .file(attachmentFile("empty.txt", "text/plain", new byte[0]))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("must not be empty")));
+    }
+
+    @Test
+    void uploadUnsupportedAttachmentContentTypeFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Unsupported Attachment Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(multipart("/tickets/{ticketId}/attachments", ticketId)
+                        .file(attachmentFile("script.js", "application/javascript", "alert(1);".getBytes(StandardCharsets.UTF_8)))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("Allowed types: image/png, image/jpeg, application/pdf, text/plain")));
+    }
+
+    @Test
+    void uploadAttachmentLargerThanTenMbFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Large Attachment Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        byte[] tooLarge = new byte[(10 * 1024 * 1024) + 1];
+
+        mockMvc.perform(multipart("/tickets/{ticketId}/attachments", ticketId)
+                        .file(attachmentFile("large.txt", "text/plain", tooLarge))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("10 MB or less")));
+    }
+
+    @Test
+    void uploadAttachmentToMissingTicketFails() throws Exception {
+        createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+
+        mockMvc.perform(multipart("/tickets/{ticketId}/attachments", 999999L)
+                        .file(attachmentFile("note.txt", "text/plain", "hello".getBytes(StandardCharsets.UTF_8)))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deleteAttachmentSucceeds() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Delete Attachment Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long attachmentId = uploadAttachment(token, ticketId, "note.txt", "text/plain", "hello".getBytes(StandardCharsets.UTF_8));
+
+        mockMvc.perform(delete("/tickets/{ticketId}/attachments/{attachmentId}", ticketId, attachmentId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(attachmentRepository.findById(attachmentId)).isEmpty();
+    }
+
+    @Test
+    void deleteMissingAttachmentFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Missing Attachment Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(delete("/tickets/{ticketId}/attachments/{attachmentId}", ticketId, 999999L)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void attachmentUploadAndDeleteActionsWriteAuditLog() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Attachment Audit Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long attachmentId = uploadAttachment(token, ticketId, "audit.txt", "text/plain", "audit".getBytes(StandardCharsets.UTF_8));
+
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.ATTACHMENT, attachmentId))
+                .anySatisfy(log -> {
+                    assertThat(log.getAction()).isEqualTo(AuditAction.UPLOAD_ATTACHMENT);
+                    assertThat(log.getActor()).isEqualTo(ActorType.USER);
+                    assertThat(log.getPerformedBy().getId()).isEqualTo(owner.getId());
+                });
+
+        mockMvc.perform(delete("/tickets/{ticketId}/attachments/{attachmentId}", ticketId, attachmentId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.ATTACHMENT, attachmentId))
+                .anySatisfy(log -> assertThat(log.getAction()).isEqualTo(AuditAction.DELETE_ATTACHMENT));
+    }
+
     private MockMultipartFile csvFile(String content) {
         return new MockMultipartFile(
                 "file",
@@ -1408,6 +1576,28 @@ class IssueFlowApplicationTests {
                 .parse(new StringReader(csv))) {
             return parser.getRecords();
         }
+    }
+
+    private MockMultipartFile attachmentFile(String filename, String contentType, byte[] content) {
+        return new MockMultipartFile("file", filename, contentType, content);
+    }
+
+    private long uploadAttachment(
+            String token,
+            Long ticketId,
+            String filename,
+            String contentType,
+            byte[] content
+    ) throws Exception {
+        String response = mockMvc.perform(multipart("/tickets/{ticketId}/attachments", ticketId)
+                        .file(attachmentFile(filename, contentType, content))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        return objectMapper.readTree(response).get("id").asLong();
     }
 
     private User createUser(String username, String email, String password) throws Exception {
