@@ -31,7 +31,12 @@ public class AuditLogService {
 
     @Transactional
     public void recordTicketAction(AuditAction action, Long ticketId) {
-        recordAction(action, AuditEntityType.TICKET, ticketId);
+        recordAction(action, AuditEntityType.TICKET, ticketId, ActorType.USER, currentUserOrNull());
+    }
+
+    @Transactional
+    public void recordSystemTicketAction(AuditAction action, Long ticketId) {
+        recordAction(action, AuditEntityType.TICKET, ticketId, ActorType.SYSTEM, null);
     }
 
     @Transactional
@@ -45,12 +50,22 @@ public class AuditLogService {
     }
 
     private void recordAction(AuditAction action, AuditEntityType entityType, Long entityId) {
+        recordAction(action, entityType, entityId, ActorType.USER, currentUserOrNull());
+    }
+
+    private void recordAction(
+            AuditAction action,
+            AuditEntityType entityType,
+            Long entityId,
+            ActorType actor,
+            User performedBy
+    ) {
         AuditLog auditLog = new AuditLog();
         auditLog.setAction(action);
         auditLog.setEntityType(entityType);
         auditLog.setEntityId(entityId);
-        auditLog.setActor(ActorType.USER);
-        auditLog.setPerformedBy(currentUserOrNull());
+        auditLog.setActor(actor);
+        auditLog.setPerformedBy(performedBy);
         auditLogRepository.save(auditLog);
     }
 

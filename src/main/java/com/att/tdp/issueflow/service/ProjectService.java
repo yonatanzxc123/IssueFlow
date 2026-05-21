@@ -3,13 +3,19 @@ package com.att.tdp.issueflow.service;
 import com.att.tdp.issueflow.domain.Project;
 import com.att.tdp.issueflow.domain.User;
 import com.att.tdp.issueflow.domain.enums.AuditAction;
+import com.att.tdp.issueflow.domain.enums.Role;
+import com.att.tdp.issueflow.domain.enums.TicketStatus;
 import com.att.tdp.issueflow.exception.ResourceNotFoundException;
 import com.att.tdp.issueflow.repository.ProjectRepository;
+import com.att.tdp.issueflow.repository.TicketRepository;
+import com.att.tdp.issueflow.repository.UserRepository;
 import com.att.tdp.issueflow.web.dto.request.CreateProjectRequest;
 import com.att.tdp.issueflow.web.dto.request.UpdateProjectRequest;
 import com.att.tdp.issueflow.web.dto.response.ProjectResponse;
+import com.att.tdp.issueflow.web.dto.response.WorkloadResponse;
 import com.att.tdp.issueflow.web.mapper.ProjectMapper;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,15 +24,21 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProjectService {
 
     private final ProjectRepository projectRepository;
+    private final TicketRepository ticketRepository;
+    private final UserRepository userRepository;
     private final UserService userService;
     private final AuditLogService auditLogService;
 
     public ProjectService(
             ProjectRepository projectRepository,
+            TicketRepository ticketRepository,
+            UserRepository userRepository,
             UserService userService,
             AuditLogService auditLogService
     ) {
         this.projectRepository = projectRepository;
+        this.ticketRepository = ticketRepository;
+        this.userRepository = userRepository;
         this.userService = userService;
         this.auditLogService = auditLogService;
     }
@@ -42,6 +54,22 @@ public class ProjectService {
     @Transactional(readOnly = true)
     public ProjectResponse getProject(Long projectId) {
         return ProjectMapper.toResponse(findActiveProject(projectId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<WorkloadResponse> getProjectWorkload(Long projectId) {
+        findActiveProject(projectId);
+        return userRepository.findByRoleOrderByIdAsc(Role.DEVELOPER)
+                .stream()
+                .map(user -> new WorkloadResponse(
+                        user.getId(),
+                        user.getUsername(),
+                        countOpenTickets(projectId, user.getId())
+                ))
+                .sorted(Comparator
+                        .comparingLong(WorkloadResponse::openTicketCount)
+                        .thenComparing(WorkloadResponse::userId))
+                .toList();
     }
 
     @Transactional
@@ -102,5 +130,13 @@ public class ProjectService {
     private Project findActiveProject(Long projectId) {
         return projectRepository.findByIdAndDeletedFalse(projectId)
                 .orElseThrow(() -> new ResourceNotFoundException("Project not found"));
+    }
+
+    private long countOpenTickets(Long projectId, Long userId) {
+        return ticketRepository.countByProjectIdAndAssigneeIdAndStatusNotAndDeletedFalse(
+                projectId,
+                userId,
+                TicketStatus.DONE
+        );
     }
 }

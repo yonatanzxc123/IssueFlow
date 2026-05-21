@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.att.tdp.issueflow.domain.User;
+import com.att.tdp.issueflow.domain.enums.ActorType;
 import com.att.tdp.issueflow.domain.enums.AuditAction;
 import com.att.tdp.issueflow.domain.enums.AuditEntityType;
 import com.att.tdp.issueflow.repository.AuditLogRepository;
@@ -1008,6 +1009,193 @@ class IssueFlowApplicationTests {
                 AuditAction.ADD_DEPENDENCY,
                 AuditAction.REMOVE_DEPENDENCY
         );
+    }
+
+    @Test
+    void creatingTicketWithExplicitAssigneeKeepsThatAssignee() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User firstDeveloper = createUser("firstdev", "firstdev@example.com", "secret");
+        User explicitAssignee = createUser("explicitdev", "explicitdev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Explicit Assignment Project");
+
+        createTicket(token, projectId, firstDeveloper.getId(), "TODO");
+        long ticketId = createTicket(token, projectId, explicitAssignee.getId(), "TODO");
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assigneeId").value(explicitAssignee.getId()));
+    }
+
+    @Test
+    void creatingTicketWithoutAssigneeAutoAssignsLeastLoadedDeveloper() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User busyDeveloper = createUser("busydev", "busydev@example.com", "secret");
+        User leastLoadedDeveloper = createUser("leastdev", "leastdev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Least Loaded Project");
+        createTicket(token, projectId, busyDeveloper.getId(), "TODO");
+
+        long ticketId = createTicket(token, projectId, null, "TODO");
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assigneeId").value(leastLoadedDeveloper.getId()));
+    }
+
+    @Test
+    void adminUsersAreExcludedFromAutoAssignment() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User developer = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Admin Excluded Project");
+        createTicket(token, projectId, developer.getId(), "TODO");
+
+        long ticketId = createTicket(token, projectId, null, "TODO");
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assigneeId").value(developer.getId()));
+    }
+
+    @Test
+    void autoAssignmentTiesAreBrokenByLowestUserId() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User oldestDeveloper = createUser("oldestdev", "oldestdev@example.com", "secret");
+        createUser("newestdev", "newestdev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Tie Break Project");
+
+        long ticketId = createTicket(token, projectId, null, "TODO");
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assigneeId").value(oldestDeveloper.getId()));
+    }
+
+    @Test
+    void ifNoDeveloperExistsTicketIsCreatedUnassigned() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "No Developers Project");
+
+        long ticketId = createTicket(token, projectId, null, "TODO");
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assigneeId").doesNotExist());
+    }
+
+    @Test
+    void autoAssignmentIsNotTriggeredOnPatch() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User assignedDeveloper = createUser("assigneddev", "assigneddev@example.com", "secret");
+        createUser("otherdev", "otherdev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Patch Assignment Project");
+        long ticketId = createTicket(token, projectId, assignedDeveloper.getId(), "TODO");
+
+        mockMvc.perform(patch("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Updated without assignee"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assigneeId").value(assignedDeveloper.getId()));
+    }
+
+    @Test
+    void workloadEndpointReturnsOpenTicketCountsPerDeveloperInProject() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User firstDeveloper = createUser("firstdev", "firstdev@example.com", "secret");
+        User secondDeveloper = createUser("seconddev", "seconddev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Workload Project");
+        long otherProjectId = createProject(token, admin.getId(), "Other Workload Project");
+        createTicket(token, projectId, firstDeveloper.getId(), "TODO");
+        createTicket(token, projectId, firstDeveloper.getId(), "IN_PROGRESS");
+        createTicket(token, otherProjectId, firstDeveloper.getId(), "TODO");
+
+        mockMvc.perform(get("/projects/{projectId}/workload", projectId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].userId").value(secondDeveloper.getId()))
+                .andExpect(jsonPath("$[0].openTicketCount").value(0))
+                .andExpect(jsonPath("$[1].userId").value(firstDeveloper.getId()))
+                .andExpect(jsonPath("$[1].openTicketCount").value(2));
+    }
+
+    @Test
+    void doneTicketsAreExcludedFromWorkloadCount() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User developer = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Done Excluded Workload Project");
+        createTicket(token, projectId, developer.getId(), "TODO");
+        createTicket(token, projectId, developer.getId(), "DONE");
+
+        mockMvc.perform(get("/projects/{projectId}/workload", projectId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].userId").value(developer.getId()))
+                .andExpect(jsonPath("$[0].openTicketCount").value(1));
+    }
+
+    @Test
+    void deletedTicketsAreExcludedFromWorkloadCount() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User developer = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Deleted Excluded Workload Project");
+        long deletedTicketId = createTicket(token, projectId, developer.getId(), "TODO");
+
+        mockMvc.perform(delete("/tickets/{ticketId}", deletedTicketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/projects/{projectId}/workload", projectId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].userId").value(developer.getId()))
+                .andExpect(jsonPath("$[0].openTicketCount").value(0));
+    }
+
+    @Test
+    void autoAssignmentRecordsSystemAuditLog() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User developer = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Auto Assign Audit Project");
+
+        long ticketId = createTicket(token, projectId, null, "TODO");
+
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.TICKET, ticketId))
+                .anySatisfy(log -> {
+                    assertThat(log.getAction()).isEqualTo(AuditAction.AUTO_ASSIGN);
+                    assertThat(log.getActor()).isEqualTo(ActorType.SYSTEM);
+                    assertThat(log.getPerformedBy()).isNull();
+                });
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assigneeId").value(developer.getId()));
     }
 
     private User createUser(String username, String email, String password) throws Exception {

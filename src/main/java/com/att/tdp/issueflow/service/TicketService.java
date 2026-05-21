@@ -4,6 +4,7 @@ import com.att.tdp.issueflow.domain.Project;
 import com.att.tdp.issueflow.domain.Ticket;
 import com.att.tdp.issueflow.domain.User;
 import com.att.tdp.issueflow.domain.enums.AuditAction;
+import com.att.tdp.issueflow.domain.enums.Role;
 import com.att.tdp.issueflow.domain.enums.TicketPriority;
 import com.att.tdp.issueflow.domain.enums.TicketStatus;
 import com.att.tdp.issueflow.exception.ConflictException;
@@ -11,12 +12,15 @@ import com.att.tdp.issueflow.exception.ResourceNotFoundException;
 import com.att.tdp.issueflow.repository.ProjectRepository;
 import com.att.tdp.issueflow.repository.TicketDependencyRepository;
 import com.att.tdp.issueflow.repository.TicketRepository;
+import com.att.tdp.issueflow.repository.UserRepository;
 import com.att.tdp.issueflow.web.dto.request.CreateTicketRequest;
 import com.att.tdp.issueflow.web.dto.request.UpdateTicketRequest;
 import com.att.tdp.issueflow.web.dto.response.TicketResponse;
 import com.att.tdp.issueflow.web.mapper.TicketMapper;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +30,7 @@ public class TicketService {
     private final TicketRepository ticketRepository;
     private final ProjectRepository projectRepository;
     private final TicketDependencyRepository ticketDependencyRepository;
+    private final UserRepository userRepository;
     private final UserService userService;
     private final AuditLogService auditLogService;
 
@@ -33,12 +38,14 @@ public class TicketService {
             TicketRepository ticketRepository,
             ProjectRepository projectRepository,
             TicketDependencyRepository ticketDependencyRepository,
+            UserRepository userRepository,
             UserService userService,
             AuditLogService auditLogService
     ) {
         this.ticketRepository = ticketRepository;
         this.projectRepository = projectRepository;
         this.ticketDependencyRepository = ticketDependencyRepository;
+        this.userRepository = userRepository;
         this.userService = userService;
         this.auditLogService = auditLogService;
     }
@@ -60,7 +67,14 @@ public class TicketService {
     @Transactional
     public TicketResponse createTicket(CreateTicketRequest request) {
         Project project = findActiveProject(request.projectId());
-        User assignee = findAssigneeOrNull(request.assigneeId());
+        Optional<User> autoAssignedUser = Optional.empty();
+        User assignee;
+        if (request.assigneeId() == null) {
+            autoAssignedUser = findLeastLoadedDeveloper(project.getId());
+            assignee = autoAssignedUser.orElse(null);
+        } else {
+            assignee = userService.findUser(request.assigneeId());
+        }
 
         Ticket ticket = new Ticket();
         ticket.setTitle(request.title());
@@ -74,6 +88,9 @@ public class TicketService {
 
         Ticket saved = ticketRepository.save(ticket);
         auditLogService.recordTicketAction(AuditAction.CREATE_TICKET, saved.getId());
+        if (autoAssignedUser.isPresent()) {
+            auditLogService.recordSystemTicketAction(AuditAction.AUTO_ASSIGN, saved.getId());
+        }
         return TicketMapper.toResponse(saved);
     }
 
@@ -147,13 +164,6 @@ public class TicketService {
                 .orElseThrow(() -> new ResourceNotFoundException("Project not found"));
     }
 
-    private User findAssigneeOrNull(Long assigneeId) {
-        if (assigneeId == null) {
-            return null;
-        }
-        return userService.findUser(assigneeId);
-    }
-
     private void ensureProjectActive(Project project) {
         if (project.isDeleted()) {
             throw new ResourceNotFoundException("Project not found");
@@ -194,5 +204,21 @@ public class TicketService {
 
     private boolean hasUnresolvedBlockers(Ticket ticket) {
         return ticketDependencyRepository.existsByTicketIdAndBlockerTicketStatusNot(ticket.getId(), TicketStatus.DONE);
+    }
+
+    private Optional<User> findLeastLoadedDeveloper(Long projectId) {
+        return userRepository.findByRoleOrderByIdAsc(Role.DEVELOPER)
+                .stream()
+                .min(Comparator
+                        .comparingLong((User user) -> countOpenTickets(projectId, user.getId()))
+                        .thenComparing(User::getId));
+    }
+
+    private long countOpenTickets(Long projectId, Long userId) {
+        return ticketRepository.countByProjectIdAndAssigneeIdAndStatusNotAndDeletedFalse(
+                projectId,
+                userId,
+                TicketStatus.DONE
+        );
     }
 }

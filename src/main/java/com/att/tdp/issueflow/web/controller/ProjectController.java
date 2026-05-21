@@ -4,6 +4,7 @@ import com.att.tdp.issueflow.service.ProjectService;
 import com.att.tdp.issueflow.web.dto.request.CreateProjectRequest;
 import com.att.tdp.issueflow.web.dto.request.UpdateProjectRequest;
 import com.att.tdp.issueflow.web.dto.response.ProjectResponse;
+import com.att.tdp.issueflow.web.dto.response.WorkloadResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -35,6 +36,11 @@ public class ProjectController {
     @GetMapping("/{projectId}")
     public ProjectResponse getProject(@PathVariable Long projectId) {
         return projectService.getProject(projectId);
+    }
+
+    @GetMapping("/{projectId}/workload")
+    public List<WorkloadResponse> getProjectWorkload(@PathVariable Long projectId) {
+        return projectService.getProjectWorkload(projectId);
     }
 
     @PostMapping
