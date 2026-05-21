@@ -34,6 +34,11 @@ public class AuditLogService {
         recordAction(action, AuditEntityType.TICKET, ticketId);
     }
 
+    @Transactional
+    public void recordCommentAction(AuditAction action, Long commentId) {
+        recordAction(action, AuditEntityType.COMMENT, commentId);
+    }
+
     private void recordAction(AuditAction action, AuditEntityType entityType, Long entityId) {
         AuditLog auditLog = new AuditLog();
         auditLog.setAction(action);

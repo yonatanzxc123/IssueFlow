@@ -15,6 +15,8 @@ import com.att.tdp.issueflow.domain.User;
 import com.att.tdp.issueflow.domain.enums.AuditAction;
 import com.att.tdp.issueflow.domain.enums.AuditEntityType;
 import com.att.tdp.issueflow.repository.AuditLogRepository;
+import com.att.tdp.issueflow.repository.CommentRepository;
+import com.att.tdp.issueflow.repository.MentionRepository;
 import com.att.tdp.issueflow.repository.ProjectRepository;
 import com.att.tdp.issueflow.repository.RevokedTokenRepository;
 import com.att.tdp.issueflow.repository.TicketRepository;
@@ -40,6 +42,8 @@ class IssueFlowApplicationTests {
     private final UserRepository userRepository;
     private final ProjectRepository projectRepository;
     private final TicketRepository ticketRepository;
+    private final CommentRepository commentRepository;
+    private final MentionRepository mentionRepository;
     private final AuditLogRepository auditLogRepository;
     private final RevokedTokenRepository revokedTokenRepository;
     private final PasswordEncoder passwordEncoder;
@@ -51,6 +55,8 @@ class IssueFlowApplicationTests {
             UserRepository userRepository,
             ProjectRepository projectRepository,
             TicketRepository ticketRepository,
+            CommentRepository commentRepository,
+            MentionRepository mentionRepository,
             AuditLogRepository auditLogRepository,
             RevokedTokenRepository revokedTokenRepository,
             PasswordEncoder passwordEncoder
@@ -60,6 +66,8 @@ class IssueFlowApplicationTests {
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
         this.ticketRepository = ticketRepository;
+        this.commentRepository = commentRepository;
+        this.mentionRepository = mentionRepository;
         this.auditLogRepository = auditLogRepository;
         this.revokedTokenRepository = revokedTokenRepository;
         this.passwordEncoder = passwordEncoder;
@@ -68,6 +76,8 @@ class IssueFlowApplicationTests {
     @BeforeEach
     void cleanDatabase() {
         auditLogRepository.deleteAll();
+        mentionRepository.deleteAll();
+        commentRepository.deleteAll();
         ticketRepository.deleteAll();
         projectRepository.deleteAll();
         revokedTokenRepository.deleteAll();
@@ -559,6 +569,241 @@ class IssueFlowApplicationTests {
         );
     }
 
+    @Test
+    void addCommentToExistingTicketSucceeds() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        String token = login("author", "secret");
+        long projectId = createProject(token, author.getId(), "Comment Project");
+        long ticketId = createTicket(token, projectId, author.getId(), "TODO");
+
+        mockMvc.perform(post("/tickets/{ticketId}/comments", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "authorId": %d,
+                                  "content": "First comment"
+                                }
+                                """.formatted(author.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ticketId").value(ticketId))
+                .andExpect(jsonPath("$.authorId").value(author.getId()))
+                .andExpect(jsonPath("$.content").value("First comment"))
+                .andExpect(jsonPath("$.mentionedUsers.length()").value(0));
+    }
+
+    @Test
+    void addCommentWithMissingTicketFails() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        String token = login("author", "secret");
+
+        mockMvc.perform(post("/tickets/{ticketId}/comments", 9999)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "authorId": %d,
+                                  "content": "No ticket"
+                                }
+                                """.formatted(author.getId())))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void addCommentWithMissingAuthorFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Comment Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(post("/tickets/{ticketId}/comments", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "authorId": 9999,
+                                  "content": "No author"
+                                }
+                                """))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getCommentsForTicketIncludesMentionedUsers() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        User mentioned = createUser("jdoe", "jdoe@example.com", "secret");
+        String token = login("author", "secret");
+        long projectId = createProject(token, author.getId(), "Mention Project");
+        long ticketId = createTicket(token, projectId, author.getId(), "TODO");
+        createComment(token, ticketId, author.getId(), "Hello @jdoe");
+
+        mockMvc.perform(get("/tickets/{ticketId}/comments", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].mentionedUsers.length()").value(1))
+                .andExpect(jsonPath("$[0].mentionedUsers[0].id").value(mentioned.getId()))
+                .andExpect(jsonPath("$[0].mentionedUsers[0].username").value("jdoe"));
+    }
+
+    @Test
+    void mentionParsingIsCaseInsensitive() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        User mentioned = createUser("CaseUser", "case@example.com", "secret");
+        String token = login("author", "secret");
+        long projectId = createProject(token, author.getId(), "Case Mention Project");
+        long ticketId = createTicket(token, projectId, author.getId(), "TODO");
+
+        mockMvc.perform(post("/tickets/{ticketId}/comments", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "authorId": %d,
+                                  "content": "Please check this @caseuser"
+                                }
+                                """.formatted(author.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mentionedUsers.length()").value(1))
+                .andExpect(jsonPath("$.mentionedUsers[0].id").value(mentioned.getId()))
+                .andExpect(jsonPath("$.mentionedUsers[0].username").value("CaseUser"));
+    }
+
+    @Test
+    void duplicateUsernameInSameCommentCreatesOneMention() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        createUser("dupe", "dupe@example.com", "secret");
+        String token = login("author", "secret");
+        long projectId = createProject(token, author.getId(), "Duplicate Mention Project");
+        long ticketId = createTicket(token, projectId, author.getId(), "TODO");
+        long commentId = createComment(token, ticketId, author.getId(), "Ping @dupe and @DUPE again");
+
+        assertThat(mentionRepository.findByCommentId(commentId)).hasSize(1);
+    }
+
+    @Test
+    void updatingCommentReevaluatesMentionsAndRemovesOldMentions() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        User oldMention = createUser("olduser", "old@example.com", "secret");
+        User newMention = createUser("newuser", "new@example.com", "secret");
+        String token = login("author", "secret");
+        long projectId = createProject(token, author.getId(), "Update Mention Project");
+        long ticketId = createTicket(token, projectId, author.getId(), "TODO");
+        long commentId = createComment(token, ticketId, author.getId(), "Initial @olduser");
+
+        mockMvc.perform(patch("/tickets/{ticketId}/comments/{commentId}", ticketId, commentId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "Updated @newuser"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/users/{userId}/mentions", oldMention.getId())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
+
+        mockMvc.perform(get("/users/{userId}/mentions", newMention.getId())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(commentId))
+                .andExpect(jsonPath("$.data[0].mentionedUsers[0].username").value("newuser"));
+    }
+
+    @Test
+    void deletingCommentRemovesMentionAssociationsCleanly() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        User mentioned = createUser("mentioned", "mentioned@example.com", "secret");
+        String token = login("author", "secret");
+        long projectId = createProject(token, author.getId(), "Delete Mention Project");
+        long ticketId = createTicket(token, projectId, author.getId(), "TODO");
+        long commentId = createComment(token, ticketId, author.getId(), "Remove @mentioned");
+
+        mockMvc.perform(delete("/tickets/{ticketId}/comments/{commentId}", ticketId, commentId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(mentionRepository.findByCommentId(commentId)).isEmpty();
+        assertThat(commentRepository.findById(commentId)).isEmpty();
+
+        mockMvc.perform(get("/users/{userId}/mentions", mentioned.getId())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
+    }
+
+    @Test
+    void getUserMentionsReturnsNewestFirstAndPaginatedResponse() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        User target = createUser("target", "target@example.com", "secret");
+        String token = login("author", "secret");
+        long projectId = createProject(token, author.getId(), "Paged Mentions Project");
+        long ticketId = createTicket(token, projectId, author.getId(), "TODO");
+        long firstCommentId = createComment(token, ticketId, author.getId(), "First @target");
+        long secondCommentId = createComment(token, ticketId, author.getId(), "Second @target");
+
+        mockMvc.perform(get("/users/{userId}/mentions", target.getId())
+                        .param("page", "0")
+                        .param("pageSize", "1")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(secondCommentId))
+                .andExpect(jsonPath("$.data[0].content").value("Second @target"));
+
+        mockMvc.perform(get("/users/{userId}/mentions", target.getId())
+                        .param("page", "1")
+                        .param("pageSize", "1")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(firstCommentId))
+                .andExpect(jsonPath("$.data[0].content").value("First @target"));
+    }
+
+    @Test
+    void commentStateChangingActionsWriteAuditLog() throws Exception {
+        User author = createUser("author", "author@example.com", "secret");
+        String token = login("author", "secret");
+        long projectId = createProject(token, author.getId(), "Audited Comments Project");
+        long ticketId = createTicket(token, projectId, author.getId(), "TODO");
+        long commentId = createComment(token, ticketId, author.getId(), "Audited comment");
+
+        mockMvc.perform(patch("/tickets/{ticketId}/comments/{commentId}", ticketId, commentId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "Audited comment updated"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/tickets/{ticketId}/comments/{commentId}", ticketId, commentId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        List<AuditAction> actions = auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.COMMENT, commentId)
+                .stream()
+                .map(log -> log.getAction())
+                .toList();
+
+        assertThat(actions).contains(
+                AuditAction.ADD_COMMENT,
+                AuditAction.UPDATE_COMMENT,
+                AuditAction.DELETE_COMMENT
+        );
+    }
+
     private User createUser(String username, String email, String password) throws Exception {
         return createUser(username, email, password, "DEVELOPER");
     }
@@ -631,6 +876,24 @@ class IssueFlowApplicationTests {
                                   "projectId": %d%s
                                 }
                                 """.formatted(ticketStatus, projectId, assigneeJson)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        return objectMapper.readTree(response).get("id").asLong();
+    }
+
+    private long createComment(String token, Long ticketId, Long authorId, String content) throws Exception {
+        String response = mockMvc.perform(post("/tickets/{ticketId}/comments", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "authorId": %d,
+                                  "content": "%s"
+                                }
+                                """.formatted(authorId, content)))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
