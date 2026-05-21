@@ -3,7 +3,9 @@ package com.att.tdp.issueflow;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -15,6 +17,7 @@ import com.att.tdp.issueflow.domain.enums.AuditEntityType;
 import com.att.tdp.issueflow.repository.AuditLogRepository;
 import com.att.tdp.issueflow.repository.ProjectRepository;
 import com.att.tdp.issueflow.repository.RevokedTokenRepository;
+import com.att.tdp.issueflow.repository.TicketRepository;
 import com.att.tdp.issueflow.repository.UserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,6 +39,7 @@ class IssueFlowApplicationTests {
     private final ObjectMapper objectMapper;
     private final UserRepository userRepository;
     private final ProjectRepository projectRepository;
+    private final TicketRepository ticketRepository;
     private final AuditLogRepository auditLogRepository;
     private final RevokedTokenRepository revokedTokenRepository;
     private final PasswordEncoder passwordEncoder;
@@ -46,6 +50,7 @@ class IssueFlowApplicationTests {
             ObjectMapper objectMapper,
             UserRepository userRepository,
             ProjectRepository projectRepository,
+            TicketRepository ticketRepository,
             AuditLogRepository auditLogRepository,
             RevokedTokenRepository revokedTokenRepository,
             PasswordEncoder passwordEncoder
@@ -54,6 +59,7 @@ class IssueFlowApplicationTests {
         this.objectMapper = objectMapper;
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
+        this.ticketRepository = ticketRepository;
         this.auditLogRepository = auditLogRepository;
         this.revokedTokenRepository = revokedTokenRepository;
         this.passwordEncoder = passwordEncoder;
@@ -62,6 +68,7 @@ class IssueFlowApplicationTests {
     @BeforeEach
     void cleanDatabase() {
         auditLogRepository.deleteAll();
+        ticketRepository.deleteAll();
         projectRepository.deleteAll();
         revokedTokenRepository.deleteAll();
         userRepository.deleteAll();
@@ -322,6 +329,236 @@ class IssueFlowApplicationTests {
         );
     }
 
+    @Test
+    void createTicketWithValidProjectSucceeds() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        User assignee = createUser("dev", "dev@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Ticket Project");
+
+        mockMvc.perform(post("/tickets")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Fix login bug",
+                                  "description": "Login fails for valid users",
+                                  "status": "TODO",
+                                  "priority": "HIGH",
+                                  "type": "BUG",
+                                  "projectId": %d,
+                                  "assigneeId": %d,
+                                  "dueDate": "2026-04-01T00:00:00Z"
+                                }
+                                """.formatted(projectId, assignee.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Fix login bug"))
+                .andExpect(jsonPath("$.projectId").value(projectId))
+                .andExpect(jsonPath("$.assigneeId").value(assignee.getId()))
+                .andExpect(jsonPath("$.dueDate").value("2026-04-01T00:00:00Z"))
+                .andExpect(jsonPath("$.isOverdue").value(false));
+    }
+
+    @Test
+    void createTicketWithMissingProjectFails() throws Exception {
+        createUser("dev", "dev@example.com", "secret");
+        String token = login("dev", "secret");
+
+        mockMvc.perform(post("/tickets")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Missing project",
+                                  "description": "No project exists",
+                                  "status": "TODO",
+                                  "priority": "HIGH",
+                                  "type": "BUG",
+                                  "projectId": 9999
+                                }
+                                """))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createTicketWithMissingAssigneeFails() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Ticket Project");
+
+        mockMvc.perform(post("/tickets")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Missing assignee",
+                                  "description": "No assignee exists",
+                                  "status": "TODO",
+                                  "priority": "MEDIUM",
+                                  "type": "FEATURE",
+                                  "projectId": %d,
+                                  "assigneeId": 9999
+                                }
+                                """.formatted(projectId)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getTicketsByProjectHidesDeletedTickets() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Visible Tickets");
+        long hiddenTicketId = createTicket(token, projectId, owner.getId(), "TODO");
+        long visibleTicketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(delete("/tickets/{ticketId}", hiddenTicketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/tickets")
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(visibleTicketId));
+    }
+
+    @Test
+    void deleteTicketSoftDeletesIt() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Soft Delete Tickets");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(delete("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(ticketRepository.findById(ticketId).orElseThrow().isDeleted()).isTrue();
+        assertThat(ticketRepository.findById(ticketId).orElseThrow().getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    void normalTicketGetAfterDeleteReturnsNotFound() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Hidden Ticket");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(delete("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deletedTicketsEndpointRequiresAdmin() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Deleted Tickets");
+
+        mockMvc.perform(get("/tickets/deleted")
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void restoreTicketEndpointRequiresAdmin() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Restore Tickets");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+
+        mockMvc.perform(delete("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/tickets/{ticketId}/restore", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void cannotUpdateTicketOnceDone() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Done Tickets");
+        long ticketId = createTicket(token, projectId, owner.getId(), "DONE");
+
+        mockMvc.perform(patch("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Should not change"
+                                }
+                                """))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void cannotMoveTicketStatusBackward() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Lifecycle Tickets");
+        long ticketId = createTicket(token, projectId, owner.getId(), "IN_REVIEW");
+
+        mockMvc.perform(patch("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "IN_PROGRESS"
+                                }
+                                """))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void ticketStateChangingActionsWriteAuditLog() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        String adminToken = login("admin", "secret");
+        long projectId = createProject(adminToken, admin.getId(), "Audited Tickets");
+        long ticketId = createTicket(adminToken, projectId, admin.getId(), "TODO");
+
+        mockMvc.perform(patch("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "IN_PROGRESS",
+                                  "priority": "CRITICAL"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/tickets/{ticketId}/restore", ticketId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(ticketId));
+
+        List<AuditAction> actions = auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.TICKET, ticketId)
+                .stream()
+                .map(log -> log.getAction())
+                .toList();
+
+        assertThat(actions).contains(
+                AuditAction.CREATE_TICKET,
+                AuditAction.UPDATE_TICKET,
+                AuditAction.DELETE_TICKET,
+                AuditAction.RESTORE_TICKET
+        );
+    }
+
     private User createUser(String username, String email, String password) throws Exception {
         return createUser(username, email, password, "DEVELOPER");
     }
@@ -371,6 +608,29 @@ class IssueFlowApplicationTests {
                                   "ownerId": %d
                                 }
                                 """.formatted(name, ownerId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        return objectMapper.readTree(response).get("id").asLong();
+    }
+
+    private long createTicket(String token, Long projectId, Long assigneeId, String ticketStatus) throws Exception {
+        String assigneeJson = assigneeId == null ? "" : ", \"assigneeId\": " + assigneeId;
+        String response = mockMvc.perform(post("/tickets")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Test ticket",
+                                  "description": "A test ticket",
+                                  "status": "%s",
+                                  "priority": "HIGH",
+                                  "type": "BUG",
+                                  "projectId": %d%s
+                                }
+                                """.formatted(ticketStatus, projectId, assigneeJson)))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()

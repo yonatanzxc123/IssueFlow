@@ -26,10 +26,19 @@ public class AuditLogService {
 
     @Transactional
     public void recordProjectAction(AuditAction action, Long projectId) {
+        recordAction(action, AuditEntityType.PROJECT, projectId);
+    }
+
+    @Transactional
+    public void recordTicketAction(AuditAction action, Long ticketId) {
+        recordAction(action, AuditEntityType.TICKET, ticketId);
+    }
+
+    private void recordAction(AuditAction action, AuditEntityType entityType, Long entityId) {
         AuditLog auditLog = new AuditLog();
         auditLog.setAction(action);
-        auditLog.setEntityType(AuditEntityType.PROJECT);
-        auditLog.setEntityId(projectId);
+        auditLog.setEntityType(entityType);
+        auditLog.setEntityId(entityId);
         auditLog.setActor(ActorType.USER);
         auditLog.setPerformedBy(currentUserOrNull());
         auditLogRepository.save(auditLog);
