@@ -1,0 +1,724 @@
+{
+  "info": {
+    "name": "IssueFlow Auto Assignment and Workload Tests",
+    "_postman_id": "b23c9f70-auto-assignment-workload",
+    "description": "Manual smoke-test collection for IssueFlow auto-assignment and project workload.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('runId')) { pm.collectionVariables.set('runId', Date.now().toString()); }",
+          "if (!pm.collectionVariables.get('baseUrl')) { pm.collectionVariables.set('baseUrl', 'http://localhost:8080'); }"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "adminId",
+      "value": ""
+    },
+    {
+      "key": "dev1Id",
+      "value": ""
+    },
+    {
+      "key": "dev2Id",
+      "value": ""
+    },
+    {
+      "key": "dev3Id",
+      "value": ""
+    },
+    {
+      "key": "projectId",
+      "value": ""
+    },
+    {
+      "key": "explicitTicketId",
+      "value": ""
+    },
+    {
+      "key": "autoTicketId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Reset runId and variables",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"dummy\",\n  \"password\": \"dummy\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('runId', Date.now().toString());",
+              "['adminToken','adminId','dev1Id','dev2Id','dev3Id','projectId','explicitTicketId','autoTicketId'].forEach(k => pm.collectionVariables.unset(k));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Create ADMIN user",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_workload_{{runId}}\",\n  \"email\": \"admin_workload_{{runId}}@example.com\",\n  \"fullName\": \"Admin Workload Test\",\n  \"role\": \"ADMIN\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('adminId', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Login ADMIN",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_workload_{{runId}}\",\n  \"password\": \"secret\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('adminToken', json.accessToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Create DEVELOPER 1",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"dev1_workload_{{runId}}\",\n  \"email\": \"dev1_workload_{{runId}}@example.com\",\n  \"fullName\": \"Dev One Workload\",\n  \"role\": \"DEVELOPER\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('dev1Id', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Create DEVELOPER 2",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"dev2_workload_{{runId}}\",\n  \"email\": \"dev2_workload_{{runId}}@example.com\",\n  \"fullName\": \"Dev Two Workload\",\n  \"role\": \"DEVELOPER\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('dev2Id', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Create DEVELOPER 3",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"dev3_workload_{{runId}}\",\n  \"email\": \"dev3_workload_{{runId}}@example.com\",\n  \"fullName\": \"Dev Three Workload\",\n  \"role\": \"DEVELOPER\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('dev3Id', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Create main project",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/projects",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "projects"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Workload Project {{runId}}\",\n  \"description\": \"Manual auto-assignment workload test\",\n  \"ownerId\": \"{{dev1Id}}\"\n}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('projectId', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Create explicit ticket assigned to DEV 1",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/tickets",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tickets"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Explicit assignee ticket {{runId}}\",\n  \"description\": \"Creates workload for dev1\",\n  \"status\": \"TODO\",\n  \"priority\": \"MEDIUM\",\n  \"type\": \"BUG\",\n  \"projectId\": \"{{projectId}}\",\n  \"assigneeId\": \"{{dev1Id}}\"\n}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('explicitTicketId', json.id);",
+              "pm.test('Explicit assignee is dev1', function () { pm.expect(pm.response.json().assigneeId).to.eql(Number(pm.collectionVariables.get('dev1Id'))); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Create unassigned ticket should auto-assign least loaded DEVELOPER",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/tickets",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tickets"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Auto-assigned ticket {{runId}}\",\n  \"description\": \"No assigneeId should trigger auto-assignment\",\n  \"status\": \"TODO\",\n  \"priority\": \"HIGH\",\n  \"type\": \"FEATURE\",\n  \"projectId\": \"{{projectId}}\"\n}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('autoTicketId', json.id);",
+              "pm.test('Auto-assigned ticket did not go to ADMIN', function () { pm.expect(pm.response.json().assigneeId).to.not.eql(Number(pm.collectionVariables.get('adminId'))); });",
+              "pm.test('Auto-assigned ticket avoids loaded dev1', function () { pm.expect(pm.response.json().assigneeId).to.not.eql(Number(pm.collectionVariables.get('dev1Id'))); });",
+              "pm.test('Auto-assigned ticket assigned to a developer', function () { const id = pm.response.json().assigneeId; pm.expect([Number(pm.collectionVariables.get('dev2Id')), Number(pm.collectionVariables.get('dev3Id'))]).to.include(id); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - Get workload for main project",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/projects/{{projectId}}/workload",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "projects",
+            "{{projectId}}",
+            "workload"
+          ],
+          "query": []
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Workload returns developers only and excludes admin', function () { const arr = pm.response.json(); const adminId = Number(pm.collectionVariables.get('adminId')); pm.expect(arr.some(w => w.userId === adminId)).to.eql(false); });",
+              "pm.test('Workload includes dev1, dev2, dev3', function () { const arr = pm.response.json(); const ids = arr.map(w => w.userId); pm.expect(ids).to.include(Number(pm.collectionVariables.get('dev1Id'))); pm.expect(ids).to.include(Number(pm.collectionVariables.get('dev2Id'))); pm.expect(ids).to.include(Number(pm.collectionVariables.get('dev3Id'))); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - PATCH explicit assignee should override assignment",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/tickets/{{autoTicketId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tickets",
+            "{{autoTicketId}}"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"assigneeId\": \"{{dev1Id}}\"\n}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - Verify PATCH explicit assignee",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/tickets/{{autoTicketId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tickets",
+            "{{autoTicketId}}"
+          ],
+          "query": []
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Assignee changed to dev1', function () { pm.expect(pm.response.json().assigneeId).to.eql(Number(pm.collectionVariables.get('dev1Id'))); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 - Move explicit ticket to DONE",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/tickets/{{explicitTicketId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tickets",
+            "{{explicitTicketId}}"
+          ],
+          "query": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"DONE\"\n}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 - Workload excludes DONE ticket",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/projects/{{projectId}}/workload",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "projects",
+            "{{projectId}}",
+            "workload"
+          ],
+          "query": []
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Workload endpoint still works after DONE transition', function () { pm.expect(pm.response.json()).to.be.an('array'); });",
+              "pm.test('Dev1 workload is at least 1 due to auto ticket patched to dev1', function () { const dev1 = pm.response.json().find(w => w.userId === Number(pm.collectionVariables.get('dev1Id'))); pm.expect(dev1).to.not.eql(undefined); pm.expect(dev1.openTicketCount).to.be.at.least(1); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 - Missing token should be unauthorized for workload",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/projects/{{projectId}}/workload",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "projects",
+            "{{projectId}}",
+            "workload"
+          ],
+          "query": []
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

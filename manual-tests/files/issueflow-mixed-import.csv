@@ -1,0 +1,5 @@
+id,title,description,status,priority,type,assigneeId
+1,"Valid row before errors","This one should be created",TODO,LOW,BUG,
+2,"","Missing title should fail",TODO,LOW,BUG,
+3,"Bad enum status","Should fail because status is invalid",NOT_A_STATUS,LOW,BUG,
+4,"Valid row after errors","This valid row should still be created",TODO,MEDIUM,TECHNICAL,

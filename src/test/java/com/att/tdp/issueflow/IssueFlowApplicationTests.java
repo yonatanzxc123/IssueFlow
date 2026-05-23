@@ -243,6 +243,108 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void createUserWithInvalidRoleReturnsBadRequest() throws Exception {
+        mockMvc.perform(post("/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "username": "badrole",
+                                  "email": "badrole@example.com",
+                                  "fullName": "Bad Role",
+                                  "role": "MANAGER"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("MANAGER")));
+    }
+
+    @Test
+    void getUsersReturnsDtosWithoutPasswordHash() throws Exception {
+        createUser("jdoe", "jdoe@example.com", "secret");
+        createUser("asmith", "asmith@example.com", "secret");
+        String token = login("jdoe", "secret");
+
+        String response = mockMvc.perform(get("/users")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].id").exists())
+                .andExpect(jsonPath("$[0].username").exists())
+                .andExpect(jsonPath("$[0].passwordHash").doesNotExist())
+                .andExpect(jsonPath("$[1].passwordHash").doesNotExist())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(response).doesNotContain("passwordHash");
+    }
+
+    @Test
+    void getUserByIdReturnsExpectedDto() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+        String token = login("jdoe", "secret");
+
+        mockMvc.perform(get("/users/{userId}", user.getId())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(user.getId()))
+                .andExpect(jsonPath("$.username").value("jdoe"))
+                .andExpect(jsonPath("$.email").value("jdoe@example.com"))
+                .andExpect(jsonPath("$.fullName").value("Test User"))
+                .andExpect(jsonPath("$.role").value("DEVELOPER"))
+                .andExpect(jsonPath("$.passwordHash").doesNotExist());
+    }
+
+    @Test
+    void updateUserPersistsFullNameAndRoleChanges() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+        String token = login("jdoe", "secret");
+
+        mockMvc.perform(post("/users/update/{userId}", user.getId())
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fullName": "Jane Doe",
+                                  "role": "ADMIN"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        User updated = userRepository.findById(user.getId()).orElseThrow();
+        assertThat(updated.getFullName()).isEqualTo("Jane Doe");
+        assertThat(updated.getRole().name()).isEqualTo("ADMIN");
+    }
+
+    @Test
+    void deleteUserRemovesUser() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+        String token = login("jdoe", "secret");
+
+        mockMvc.perform(delete("/users/{userId}", user.getId())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findById(user.getId())).isEmpty();
+    }
+
+    @Test
+    void authMeReturnsCurrentAuthenticatedUser() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+        String token = login("jdoe", "secret");
+
+        mockMvc.perform(get("/auth/me")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.id").value(user.getId()))
+                .andExpect(jsonPath("$.user.username").value("jdoe"))
+                .andExpect(jsonPath("$.user.email").value("jdoe@example.com"))
+                .andExpect(jsonPath("$.user.fullName").value("Test User"))
+                .andExpect(jsonPath("$.user.role").value("DEVELOPER"))
+                .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
+    }
+
+    @Test
     void createProjectWithValidOwnerSucceeds() throws Exception {
         User owner = createUser("owner", "owner@example.com", "secret");
         String token = login("owner", "secret");
@@ -281,6 +383,32 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void updateProjectPersistsNameAndDescription() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Original Project");
+
+        mockMvc.perform(patch("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Updated Project",
+                                  "description": "Updated description"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Updated Project"))
+                .andExpect(jsonPath("$.description").value("Updated description"));
+
+        mockMvc.perform(get("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Updated Project"))
+                .andExpect(jsonPath("$.description").value("Updated description"));
+    }
+
+    @Test
     void normalProjectGetHidesDeletedProject() throws Exception {
         User owner = createUser("owner", "owner@example.com", "secret");
         String token = login("owner", "secret");
@@ -302,6 +430,34 @@ class IssueFlowApplicationTests {
         mockMvc.perform(get("/projects/{projectId}", projectId)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void adminCanListAndRestoreDeletedProjects() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        String adminToken = login("admin", "secret");
+        long projectId = createProject(adminToken, admin.getId(), "Deleted Project");
+
+        mockMvc.perform(delete("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/projects/deleted")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(projectId))
+                .andExpect(jsonPath("$[0].name").value("Deleted Project"));
+
+        mockMvc.perform(post("/projects/{projectId}/restore", projectId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(projectId));
+
+        mockMvc.perform(get("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(projectId));
     }
 
     @Test
@@ -605,6 +761,52 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void createTicketWithInvalidEnumReturnsBadRequest() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Invalid Enum Tickets");
+
+        mockMvc.perform(post("/tickets")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Bad enum",
+                                  "description": "Invalid ticket status",
+                                  "status": "WIP",
+                                  "priority": "HIGH",
+                                  "type": "BUG",
+                                  "projectId": %d
+                                }
+                                """.formatted(projectId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("WIP")));
+    }
+
+    @Test
+    void createTicketWithMissingTitleReturnsValidationError() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Missing Title Tickets");
+
+        mockMvc.perform(post("/tickets")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "description": "Title is required",
+                                  "status": "TODO",
+                                  "priority": "HIGH",
+                                  "type": "BUG",
+                                  "projectId": %d
+                                }
+                                """.formatted(projectId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Validation failed"))
+                .andExpect(jsonPath("$.fieldErrors[0].field").value("title"));
+    }
+
+    @Test
     void getTicketsByProjectHidesDeletedTickets() throws Exception {
         User owner = createUser("owner", "owner@example.com", "secret");
         String token = login("owner", "secret");
@@ -681,6 +883,35 @@ class IssueFlowApplicationTests {
         mockMvc.perform(post("/tickets/{ticketId}/restore", ticketId)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void adminCanRestoreDeletedTicketVisibility() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        String adminToken = login("admin", "secret");
+        long projectId = createProject(adminToken, admin.getId(), "Restore Ticket Visibility");
+        long ticketId = createTicket(adminToken, projectId, admin.getId(), "TODO");
+
+        mockMvc.perform(delete("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/tickets/deleted")
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(ticketId));
+
+        mockMvc.perform(post("/tickets/{ticketId}/restore", ticketId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(ticketId));
+
+        mockMvc.perform(get("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(ticketId));
     }
 
     @Test
@@ -1569,6 +1800,25 @@ class IssueFlowApplicationTests {
         assertThat(records.getFirst().get("id")).isEqualTo(String.valueOf(exportedTicketId));
         assertThat(records.getFirst().get("title")).isEqualTo("Login, \"breaks\"\nagain");
         assertThat(records.getFirst().get("description")).isEqualTo("First line\nSecond, \"quoted\"");
+    }
+
+    @Test
+    void importWithMissingOrEmptyCsvFileReturnsBadRequest() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "CSV Missing File Project");
+
+        mockMvc.perform(multipart("/tickets/import")
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(multipart("/tickets/import")
+                        .file(csvFile(""))
+                        .param("projectId", String.valueOf(projectId))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("CSV file is required"));
     }
 
     @Test

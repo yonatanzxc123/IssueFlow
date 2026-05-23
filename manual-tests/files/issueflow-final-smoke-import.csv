@@ -1,0 +1,2 @@
+id,title,description,status,priority,type,assigneeId
+999,"Final imported ticket, comma","Imported description with ""quotes""",TODO,MEDIUM,BUG,

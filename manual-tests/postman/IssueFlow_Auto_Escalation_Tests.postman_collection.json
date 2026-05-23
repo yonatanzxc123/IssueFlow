@@ -1,0 +1,855 @@
+{
+  "info": {
+    "name": "IssueFlow Auto Escalation Scheduler Tests",
+    "_postman_id": "f15f80cc-auto-escalation-scheduler",
+    "description": "Manual smoke-test collection for IssueFlow automatic overdue ticket escalation. Run setup requests, then wait at least 70 seconds for the scheduler, then run verification requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('runId')) { pm.collectionVariables.set('runId', Date.now().toString()); }",
+          "if (!pm.collectionVariables.get('baseUrl')) { pm.collectionVariables.set('baseUrl', 'http://localhost:8080'); }"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "adminId",
+      "value": ""
+    },
+    {
+      "key": "devId",
+      "value": ""
+    },
+    {
+      "key": "projectId",
+      "value": ""
+    },
+    {
+      "key": "lowTicketId",
+      "value": ""
+    },
+    {
+      "key": "highTicketId",
+      "value": ""
+    },
+    {
+      "key": "criticalTicketId",
+      "value": ""
+    },
+    {
+      "key": "doneTicketId",
+      "value": ""
+    },
+    {
+      "key": "futureTicketId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Setup - create users/project/tickets",
+      "item": [
+        {
+          "name": "00 - Reset runId and variables",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ],
+              "query": []
+            },
+            "description": "Optional. Intentionally returns 401 but resets variables for a fresh unique run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"dummy\",\n  \"password\": \"dummy\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('runId', Date.now().toString());",
+                  "['adminToken','adminId','devId','projectId','lowTicketId','highTicketId','criticalTicketId','doneTicketId','futureTicketId'].forEach(k => pm.collectionVariables.unset(k));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01 - Create ADMIN user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin_escalation_{{runId}}\",\n  \"email\": \"admin_escalation_{{runId}}@example.com\",\n  \"fullName\": \"Admin Escalation Test\",\n  \"role\": \"ADMIN\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('adminId', json.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 - Login ADMIN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin_escalation_{{runId}}\",\n  \"password\": \"secret\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('adminToken', json.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 - Create DEVELOPER user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"dev_escalation_{{runId}}\",\n  \"email\": \"dev_escalation_{{runId}}@example.com\",\n  \"fullName\": \"Dev Escalation Test\",\n  \"role\": \"DEVELOPER\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('devId', json.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "04 - Create project",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/projects",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Escalation Project {{runId}}\",\n  \"description\": \"Manual escalation scheduler test project\",\n  \"ownerId\": \"{{devId}}\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('projectId', json.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05 - Create overdue LOW ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Overdue LOW escalation {{runId}}\",\n  \"description\": \"Should become MEDIUM after one scheduler run\",\n  \"status\": \"TODO\",\n  \"priority\": \"LOW\",\n  \"type\": \"BUG\",\n  \"projectId\": \"{{projectId}}\",\n  \"assigneeId\": \"{{devId}}\",\n  \"dueDate\": \"2020-01-01T00:00:00Z\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('lowTicketId', json.id);",
+                  "pm.test('Initial priority LOW', function () { pm.expect(pm.response.json().priority).to.eql('LOW'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "06 - Create overdue HIGH ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Overdue HIGH escalation {{runId}}\",\n  \"description\": \"Should become CRITICAL after one scheduler run\",\n  \"status\": \"TODO\",\n  \"priority\": \"HIGH\",\n  \"type\": \"BUG\",\n  \"projectId\": \"{{projectId}}\",\n  \"assigneeId\": \"{{devId}}\",\n  \"dueDate\": \"2020-01-01T00:00:00Z\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('highTicketId', json.id);",
+                  "pm.test('Initial priority HIGH', function () { pm.expect(pm.response.json().priority).to.eql('HIGH'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "07 - Create overdue CRITICAL ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Overdue CRITICAL escalation {{runId}}\",\n  \"description\": \"Should set isOverdue true after one scheduler run\",\n  \"status\": \"TODO\",\n  \"priority\": \"CRITICAL\",\n  \"type\": \"BUG\",\n  \"projectId\": \"{{projectId}}\",\n  \"assigneeId\": \"{{devId}}\",\n  \"dueDate\": \"2020-01-01T00:00:00Z\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('criticalTicketId', json.id);",
+                  "pm.test('Initial priority CRITICAL', function () { pm.expect(pm.response.json().priority).to.eql('CRITICAL'); });",
+                  "pm.test('Initially not overdue flag', function () { pm.expect(pm.response.json().isOverdue).to.eql(false); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "08 - Create overdue DONE ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Overdue DONE ignored {{runId}}\",\n  \"description\": \"DONE tickets should be ignored by escalation\",\n  \"status\": \"DONE\",\n  \"priority\": \"LOW\",\n  \"type\": \"BUG\",\n  \"projectId\": \"{{projectId}}\",\n  \"assigneeId\": \"{{devId}}\",\n  \"dueDate\": \"2020-01-01T00:00:00Z\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('doneTicketId', json.id);",
+                  "pm.test('Initial status DONE', function () { pm.expect(pm.response.json().status).to.eql('DONE'); });",
+                  "pm.test('Initial priority LOW', function () { pm.expect(pm.response.json().priority).to.eql('LOW'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "09 - Create future due LOW ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets"
+              ],
+              "query": []
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Future LOW ignored {{runId}}\",\n  \"description\": \"Future due tickets should be ignored by escalation\",\n  \"status\": \"TODO\",\n  \"priority\": \"LOW\",\n  \"type\": \"BUG\",\n  \"projectId\": \"{{projectId}}\",\n  \"assigneeId\": \"{{devId}}\",\n  \"dueDate\": \"2099-01-01T00:00:00Z\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('futureTicketId', json.id);",
+                  "pm.test('Initial priority LOW', function () { pm.expect(pm.response.json().priority).to.eql('LOW'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Verification - wait before running",
+      "item": [
+        {
+          "name": "10 - WAIT before this request: at least 70 seconds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{lowTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{lowTicketId}}"
+              ],
+              "query": []
+            },
+            "description": "Important: wait at least 70 seconds after creating the tickets before running this request. The scheduler has a 60-second initial delay.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('LOW overdue ticket became MEDIUM', function () { pm.expect(pm.response.json().priority).to.eql('MEDIUM'); });",
+                  "pm.test('Status did not change', function () { pm.expect(pm.response.json().status).to.eql('TODO'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11 - Verify overdue HIGH became CRITICAL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{highTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{highTicketId}}"
+              ],
+              "query": []
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('HIGH overdue ticket became CRITICAL', function () { pm.expect(pm.response.json().priority).to.eql('CRITICAL'); });",
+                  "pm.test('Status did not change', function () { pm.expect(pm.response.json().status).to.eql('TODO'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12 - Verify overdue CRITICAL sets isOverdue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{criticalTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{criticalTicketId}}"
+              ],
+              "query": []
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('CRITICAL stays CRITICAL', function () { pm.expect(pm.response.json().priority).to.eql('CRITICAL'); });",
+                  "pm.test('isOverdue is true', function () { pm.expect(pm.response.json().isOverdue).to.eql(true); });",
+                  "pm.test('Status did not change', function () { pm.expect(pm.response.json().status).to.eql('TODO'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13 - Verify DONE ticket ignored",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{doneTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{doneTicketId}}"
+              ],
+              "query": []
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('DONE status unchanged', function () { pm.expect(pm.response.json().status).to.eql('DONE'); });",
+                  "pm.test('DONE priority unchanged', function () { pm.expect(pm.response.json().priority).to.eql('LOW'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14 - Verify future due ticket ignored",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{futureTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{futureTicketId}}"
+              ],
+              "query": []
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Future ticket priority unchanged', function () { pm.expect(pm.response.json().priority).to.eql('LOW'); });",
+                  "pm.test('Future ticket isOverdue false', function () { pm.expect(pm.response.json().isOverdue).to.eql(false); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15 - Wait another 70 seconds, then verify CRITICAL idempotent",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{criticalTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{criticalTicketId}}"
+              ],
+              "query": []
+            },
+            "description": "Optional stronger idempotency check: wait another 70 seconds before running this request. CRITICAL should remain CRITICAL and isOverdue should remain true.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('CRITICAL still CRITICAL after repeated run', function () { pm.expect(pm.response.json().priority).to.eql('CRITICAL'); });",
+                  "pm.test('isOverdue remains true', function () { pm.expect(pm.response.json().isOverdue).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16 - Missing token should be unauthorized",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{lowTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{lowTicketId}}"
+              ],
+              "query": []
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

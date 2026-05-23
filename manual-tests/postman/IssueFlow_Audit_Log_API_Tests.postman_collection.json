@@ -1,0 +1,797 @@
+{
+  "info": {
+    "name": "IssueFlow Audit Log API Tests",
+    "_postman_id": "b8f20f23-issueflow-audit-log-api",
+    "description": "Manual smoke-test collection for IssueFlow read-only Audit Log API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('runId')) { pm.collectionVariables.set('runId', Date.now().toString()); }",
+          "if (!pm.collectionVariables.get('baseUrl')) { pm.collectionVariables.set('baseUrl', 'http://localhost:8080'); }"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "adminId",
+      "value": ""
+    },
+    {
+      "key": "devId",
+      "value": ""
+    },
+    {
+      "key": "projectId",
+      "value": ""
+    },
+    {
+      "key": "ticketId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Reset runId and variables",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ],
+          "query": []
+        },
+        "description": "Optional. Intentionally returns 401 but resets variables for a fresh unique run.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"dummy\",\n  \"password\": \"dummy\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('runId', Date.now().toString());",
+              "['adminToken','adminId','devId','projectId','ticketId'].forEach(k => pm.collectionVariables.unset(k));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Create ADMIN user",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_audit_{{runId}}\",\n  \"email\": \"admin_audit_{{runId}}@example.com\",\n  \"fullName\": \"Admin Audit Test\",\n  \"role\": \"ADMIN\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('adminId', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Login ADMIN",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ],
+          "query": []
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_audit_{{runId}}\",\n  \"password\": \"secret\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('adminToken', json.accessToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Create DEVELOPER user",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"dev_audit_{{runId}}\",\n  \"email\": \"dev_audit_{{runId}}@example.com\",\n  \"fullName\": \"Dev Audit Test\",\n  \"role\": \"DEVELOPER\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('devId', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Create project to generate CREATE_PROJECT audit",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/projects",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "projects"
+          ],
+          "query": []
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Audit Project {{runId}}\",\n  \"description\": \"Project created for audit log tests\",\n  \"ownerId\": \"{{devId}}\"\n}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('projectId', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Create ticket to generate CREATE_TICKET audit",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/tickets",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tickets"
+          ],
+          "query": []
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Audit ticket {{runId}}\",\n  \"description\": \"Ticket created for audit log tests\",\n  \"status\": \"TODO\",\n  \"priority\": \"MEDIUM\",\n  \"type\": \"BUG\",\n  \"projectId\": \"{{projectId}}\",\n  \"assigneeId\": \"{{devId}}\"\n}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('ticketId', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - GET audit logs without token should be unauthorized",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": []
+        },
+        "description": ""
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - GET all audit logs",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": []
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Response is array', function () { pm.expect(pm.response.json()).to.be.an('array'); });",
+              "pm.test('Contains at least one audit log', function () { pm.expect(pm.response.json().length).to.be.above(0); });",
+              "pm.test('Newest first by timestamp', function () {",
+              "  const arr = pm.response.json();",
+              "  for (let i = 1; i < arr.length; i++) {",
+              "    pm.expect(new Date(arr[i-1].timestamp).getTime()).to.be.at.least(new Date(arr[i].timestamp).getTime());",
+              "  }",
+              "});",
+              "pm.test('Audit response has expected fields', function () {",
+              "  const first = pm.response.json()[0];",
+              "  ['id','action','entityType','entityId','actor','timestamp'].forEach(k => pm.expect(first).to.have.property(k));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Filter by entityType PROJECT",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?entityType=PROJECT",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "entityType",
+              "value": "PROJECT"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('All logs are PROJECT', function () { pm.response.json().forEach(l => pm.expect(l.entityType).to.eql('PROJECT')); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - Filter by entityId projectId",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?entityId={{projectId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "entityId",
+              "value": "{{projectId}}"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('All logs have requested entityId', function () { const id = Number(pm.collectionVariables.get('projectId')); pm.response.json().forEach(l => pm.expect(l.entityId).to.eql(id)); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Filter by action CREATE_PROJECT",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?action=CREATE_PROJECT",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "CREATE_PROJECT"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('All logs are CREATE_PROJECT', function () { pm.response.json().forEach(l => pm.expect(l.action).to.eql('CREATE_PROJECT')); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - Filter by actor USER",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?actor=USER",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "actor",
+              "value": "USER"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('All logs have USER actor', function () { pm.response.json().forEach(l => pm.expect(l.actor).to.eql('USER')); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 - Combined filter PROJECT + projectId + CREATE_PROJECT + USER",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?entityType=PROJECT&entityId={{projectId}}&action=CREATE_PROJECT&actor=USER",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "entityType",
+              "value": "PROJECT"
+            },
+            {
+              "key": "entityId",
+              "value": "{{projectId}}"
+            },
+            {
+              "key": "action",
+              "value": "CREATE_PROJECT"
+            },
+            {
+              "key": "actor",
+              "value": "USER"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Combined filter returns matching project create log', function () {",
+              "  const id = Number(pm.collectionVariables.get('projectId'));",
+              "  const arr = pm.response.json();",
+              "  pm.expect(arr.length).to.be.at.least(1);",
+              "  arr.forEach(l => {",
+              "    pm.expect(l.entityType).to.eql('PROJECT');",
+              "    pm.expect(l.entityId).to.eql(id);",
+              "    pm.expect(l.action).to.eql('CREATE_PROJECT');",
+              "    pm.expect(l.actor).to.eql('USER');",
+              "  });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 - Invalid entityType should return 400",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?entityType=NOT_A_TYPE",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "entityType",
+              "value": "NOT_A_TYPE"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 - Invalid action should return 400",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?action=NOT_AN_ACTION",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "NOT_AN_ACTION"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "15 - Invalid actor should return 400",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?actor=NOT_AN_ACTOR",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "actor",
+              "value": "NOT_AN_ACTOR"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
