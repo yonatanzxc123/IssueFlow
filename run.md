@@ -5,7 +5,7 @@ This file explains how to run, test, and manually validate the IssueFlow backend
 
 ## Table of Contents
 
-| Section | Description                        | 
+| Section | Description                       | 
 |--------|------------------------------------| 
 | 1      | Prerequisites                      |
 | 2      | Start PostgreSQL                   | 
