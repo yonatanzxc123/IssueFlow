@@ -10,7 +10,7 @@ This repository contains the backend implementation, automated tests, run instru
 |--------------|------------------|
 | `run.md` | How to run the project, start PostgreSQL, run tests, and use the Postman collections |
 | `Instructions.md` | Important implementation notes, assumptions, and compatibility decisions |
-| `manual-tests/README.md` | Documentation of the manual Postman validation performed |
+| `manual-tests/ReadMee.md` | Documentation of the manual Postman validation performed |
 | `manual-tests/postman/` | Postman collections used for manual testing |
 | `manual-tests/files/` | Helper files for CSV import and attachment tests |
 | `prompts.md` | Summary of the AI-assisted planning/implementation workflow |
