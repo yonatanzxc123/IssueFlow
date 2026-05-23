@@ -41,6 +41,26 @@ public class AuditLogService {
     }
 
     @Transactional
+    public void recordPublicUserCreation(Long userId) {
+        recordAction(AuditAction.CREATE_USER, AuditEntityType.USER, userId, ActorType.SYSTEM, null);
+    }
+
+    @Transactional
+    public void recordUserAction(AuditAction action, Long userId) {
+        recordAction(action, AuditEntityType.USER, userId, ActorType.USER, currentUserOrNull());
+    }
+
+    @Transactional
+    public void recordUserDeletion(Long userId) {
+        recordAction(AuditAction.DELETE_USER, AuditEntityType.USER, userId, ActorType.USER, currentUserUnless(userId));
+    }
+
+    @Transactional
+    public void recordLogoutAction(Long userId) {
+        recordAction(AuditAction.LOGOUT, AuditEntityType.AUTH, userId, ActorType.USER, currentUserOrNull());
+    }
+
+    @Transactional
     public void recordTicketAction(AuditAction action, Long ticketId) {
         recordAction(action, AuditEntityType.TICKET, ticketId, ActorType.USER, currentUserOrNull());
     }
@@ -143,6 +163,17 @@ public class AuditLogService {
     private User currentUserOrNull() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof UserPrincipal principal)) {
+            return null;
+        }
+        return userRepository.findById(principal.getId()).orElse(null);
+    }
+
+    private User currentUserUnless(Long userId) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getPrincipal() instanceof UserPrincipal principal)) {
+            return null;
+        }
+        if (principal.getId().equals(userId)) {
             return null;
         }
         return userRepository.findById(principal.getId()).orElse(null);

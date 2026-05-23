@@ -14,6 +14,7 @@ import com.att.tdp.issueflow.web.mapper.UserMapper;
 import java.time.Instant;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,17 +28,20 @@ public class AuthService {
     private final RevokedTokenRepository revokedTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final AuditLogService auditLogService;
 
     public AuthService(
             UserRepository userRepository,
             RevokedTokenRepository revokedTokenRepository,
             PasswordEncoder passwordEncoder,
-            JwtService jwtService
+            JwtService jwtService,
+            AuditLogService auditLogService
     ) {
         this.userRepository = userRepository;
         this.revokedTokenRepository = revokedTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.auditLogService = auditLogService;
     }
 
     @Transactional(readOnly = true)
@@ -65,6 +69,7 @@ public class AuthService {
             revokedTokenRepository.save(revokedToken);
         }
         revokedTokenRepository.deleteByExpiresAtBefore(Instant.now());
+        auditLogService.recordLogoutAction(currentUserIdOrNull());
     }
 
     @Transactional(readOnly = true)
@@ -80,5 +85,13 @@ public class AuthService {
             throw new UnauthorizedException("Missing bearer token");
         }
         return authorizationHeader.substring(BEARER_PREFIX.length());
+    }
+
+    private Long currentUserIdOrNull() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getPrincipal() instanceof UserPrincipal principal)) {
+            return null;
+        }
+        return principal.getId();
     }
 }

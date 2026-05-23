@@ -1,0 +1,779 @@
+{
+  "info": {
+    "name": "IssueFlow User Auth Audit Completeness Tests - README Compatible",
+    "_postman_id": "issueflow-user-auth-audit-completeness-readme-compatible",
+    "description": "Manual smoke tests for final audit completeness: CREATE_USER, UPDATE_USER, DELETE_USER, LOGOUT. This collection follows the README contract: POST /users/update/{id} sends only fullName and role, expects 200 OK with an empty body, and verifies persistence with GET /users/{id}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('runId')) { pm.collectionVariables.set('runId', Date.now().toString()); }",
+          "if (!pm.collectionVariables.get('baseUrl')) { pm.collectionVariables.set('baseUrl', 'http://localhost:8080'); }"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "adminToken2",
+      "value": ""
+    },
+    {
+      "key": "adminId",
+      "value": ""
+    },
+    {
+      "key": "targetUserId",
+      "value": ""
+    },
+    {
+      "key": "deleteUserId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Reset runId and variables",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ],
+          "query": []
+        },
+        "description": "Optional reset request. It intentionally returns 401 and only resets collection variables.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"dummy\",\n  \"password\": \"dummy\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('runId', Date.now().toString());",
+              "['adminToken','adminToken2','adminId','targetUserId','deleteUserId'].forEach(k => pm.collectionVariables.unset(k));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Create ADMIN user",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "description": "Creates an ADMIN user using the README-compatible POST /users body without password.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_useraudit_{{runId}}\",\n  \"email\": \"admin_useraudit_{{runId}}@example.com\",\n  \"fullName\": \"Admin User Audit\",\n  \"role\": \"ADMIN\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('adminId', json.id);",
+              "pm.test('Create admin response does not expose passwordHash', function () { pm.expect(pm.response.text()).to.not.include('passwordHash'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Login ADMIN",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ],
+          "query": []
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_useraudit_{{runId}}\",\n  \"password\": \"secret\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('adminToken', json.accessToken);",
+              "pm.test('Token type is Bearer', function () { pm.expect(pm.response.json().tokenType).to.eql('Bearer'); });",
+              "pm.test('Access token exists', function () { pm.expect(pm.response.json().accessToken).to.be.a('string').and.not.empty; });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Create target DEVELOPER user",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "description": "Creates a target user so CREATE_USER audit can be checked.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"target_useraudit_{{runId}}\",\n  \"email\": \"target_useraudit_{{runId}}@example.com\",\n  \"fullName\": \"Target User Audit\",\n  \"role\": \"DEVELOPER\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('targetUserId', json.id);",
+              "pm.test('Target user created as DEVELOPER', function () { pm.expect(pm.response.json().role).to.eql('DEVELOPER'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Verify CREATE_USER audit exists",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?action=CREATE_USER&entityType=USER&entityId={{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "CREATE_USER"
+            },
+            {
+              "key": "entityType",
+              "value": "USER"
+            },
+            {
+              "key": "entityId",
+              "value": "{{targetUserId}}"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('CREATE_USER audit returned', function () { pm.expect(pm.response.json().length).to.be.at.least(1); });",
+              "pm.test('CREATE_USER audit shape', function () {",
+              "  const id = Number(pm.collectionVariables.get('targetUserId'));",
+              "  pm.response.json().forEach(log => {",
+              "    pm.expect(log.action).to.eql('CREATE_USER');",
+              "    pm.expect(log.entityType).to.eql('USER');",
+              "    pm.expect(log.entityId).to.eql(id);",
+              "  });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Update target user using README body",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/update/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "update",
+            "{{targetUserId}}"
+          ],
+          "query": []
+        },
+        "description": "README contract for user update body is { fullName, role } and response is 200 OK with no body. This collection does not send email because README does not define email update here.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Target User Updated\",\n  \"role\": \"DEVELOPER\"\n}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Update response body is empty, as README documents no response body', function () { pm.expect(pm.response.text().trim()).to.eql(''); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Verify target user update persisted",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{targetUserId}}"
+          ],
+          "query": []
+        },
+        "description": "Verifies update persistence with GET /users/{id}, since the update endpoint returns an empty 200 OK.",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Full name updated', function () { pm.expect(pm.response.json().fullName).to.eql('Target User Updated'); });",
+              "pm.test('Role is DEVELOPER', function () { pm.expect(pm.response.json().role).to.eql('DEVELOPER'); });",
+              "pm.test('Email remains unchanged because README update body does not include email', function () {",
+              "  pm.expect(pm.response.json().email).to.eql('target_useraudit_' + pm.collectionVariables.get('runId') + '@example.com');",
+              "});",
+              "pm.test('passwordHash is not exposed', function () { pm.expect(pm.response.text()).to.not.include('passwordHash'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Verify UPDATE_USER audit exists",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?action=UPDATE_USER&entityType=USER&entityId={{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "UPDATE_USER"
+            },
+            {
+              "key": "entityType",
+              "value": "USER"
+            },
+            {
+              "key": "entityId",
+              "value": "{{targetUserId}}"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('UPDATE_USER audit returned', function () { pm.expect(pm.response.json().length).to.be.at.least(1); });",
+              "pm.test('All returned logs are UPDATE_USER for target user', function () {",
+              "  const id = Number(pm.collectionVariables.get('targetUserId'));",
+              "  pm.response.json().forEach(l => {",
+              "    pm.expect(l.action).to.eql('UPDATE_USER');",
+              "    pm.expect(l.entityType).to.eql('USER');",
+              "    pm.expect(l.entityId).to.eql(id);",
+              "  });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Create user to delete",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "description": "Creates an unreferenced user so DELETE /users/{id} can be tested safely.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"delete_useraudit_{{runId}}\",\n  \"email\": \"delete_useraudit_{{runId}}@example.com\",\n  \"fullName\": \"Delete User Audit\",\n  \"role\": \"DEVELOPER\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('deleteUserId', json.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - Delete user",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{deleteUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{deleteUserId}}"
+          ],
+          "query": []
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Delete response body is empty', function () { pm.expect(pm.response.text().trim()).to.eql(''); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Verify DELETE_USER audit exists",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?action=DELETE_USER&entityType=USER&entityId={{deleteUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "DELETE_USER"
+            },
+            {
+              "key": "entityType",
+              "value": "USER"
+            },
+            {
+              "key": "entityId",
+              "value": "{{deleteUserId}}"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('DELETE_USER audit returned', function () { pm.expect(pm.response.json().length).to.be.at.least(1); });",
+              "pm.test('All returned logs are DELETE_USER for deleted user', function () {",
+              "  const id = Number(pm.collectionVariables.get('deleteUserId'));",
+              "  pm.response.json().forEach(l => {",
+              "    pm.expect(l.action).to.eql('DELETE_USER');",
+              "    pm.expect(l.entityType).to.eql('USER');",
+              "    pm.expect(l.entityId).to.eql(id);",
+              "  });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - Logout ADMIN token",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/auth/logout",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "logout"
+          ],
+          "query": []
+        },
+        "description": "This revokes adminToken, so protected requests using this token should fail afterward.",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Logout response body is empty', function () { pm.expect(pm.response.text().trim()).to.eql(''); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 - Verify old token is rejected after logout",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ],
+          "query": []
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 - Login ADMIN again",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ],
+          "query": []
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_useraudit_{{runId}}\",\n  \"password\": \"secret\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('adminToken2', json.accessToken);",
+              "pm.test('New access token exists', function () { pm.expect(pm.response.json().accessToken).to.be.a('string').and.not.empty; });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 - Verify LOGOUT audit exists",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/audit-logs?action=LOGOUT&actor=USER",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit-logs"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "LOGOUT"
+            },
+            {
+              "key": "actor",
+              "value": "USER"
+            }
+          ]
+        },
+        "description": "",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminToken2}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('LOGOUT audit returned', function () { pm.expect(pm.response.json().length).to.be.at.least(1); });",
+              "pm.test('All logs are LOGOUT with USER actor', function () {",
+              "  pm.response.json().forEach(l => {",
+              "    pm.expect(l.action).to.eql('LOGOUT');",
+              "    pm.expect(l.actor).to.eql('USER');",
+              "  });",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

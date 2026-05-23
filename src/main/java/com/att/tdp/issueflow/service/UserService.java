@@ -1,6 +1,7 @@
 package com.att.tdp.issueflow.service;
 
 import com.att.tdp.issueflow.domain.User;
+import com.att.tdp.issueflow.domain.enums.AuditAction;
 import com.att.tdp.issueflow.exception.ConflictException;
 import com.att.tdp.issueflow.exception.ResourceNotFoundException;
 import com.att.tdp.issueflow.repository.UserRepository;
@@ -20,10 +21,12 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuditLogService auditLogService;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuditLogService auditLogService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.auditLogService = auditLogService;
     }
 
     @Transactional(readOnly = true)
@@ -51,7 +54,9 @@ public class UserService {
         user.setRole(request.role());
         user.setPasswordHash(passwordEncoder.encode(resolvePassword(request.password())));
 
-        return UserMapper.toResponse(userRepository.save(user));
+        User saved = userRepository.save(user);
+        auditLogService.recordPublicUserCreation(saved.getId());
+        return UserMapper.toResponse(saved);
     }
 
     @Transactional
@@ -63,12 +68,14 @@ public class UserService {
         if (request.role() != null) {
             user.setRole(request.role());
         }
+        auditLogService.recordUserAction(AuditAction.UPDATE_USER, user.getId());
     }
 
     @Transactional
     public void deleteUser(Long userId) {
         User user = findUser(userId);
         userRepository.delete(user);
+        auditLogService.recordUserDeletion(userId);
     }
 
     @Transactional(readOnly = true)

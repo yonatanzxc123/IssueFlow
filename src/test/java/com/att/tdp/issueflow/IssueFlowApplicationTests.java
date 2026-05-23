@@ -161,6 +161,19 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void createUserWritesSystemAuditLog() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.USER, user.getId()))
+                .anySatisfy(log -> {
+                    assertThat(log.getAction()).isEqualTo(AuditAction.CREATE_USER);
+                    assertThat(log.getActor()).isEqualTo(ActorType.SYSTEM);
+                    assertThat(log.getPerformedBy()).isNull();
+                });
+    }
+
+    @Test
     void duplicateUsernameOrEmailReturnsConflict() throws Exception {
         createUser("jdoe", "jdoe@example.com", null);
 
@@ -243,6 +256,24 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void logoutWritesAuditLog() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+        String accessToken = login("jdoe", "secret");
+
+        mockMvc.perform(post("/auth/logout")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk());
+
+        assertThat(auditLogRepository.findByActionOrderByTimestampDesc(AuditAction.LOGOUT))
+                .anySatisfy(log -> {
+                    assertThat(log.getEntityType()).isEqualTo(AuditEntityType.AUTH);
+                    assertThat(log.getEntityId()).isEqualTo(user.getId());
+                    assertThat(log.getActor()).isEqualTo(ActorType.USER);
+                    assertThat(log.getPerformedBy().getId()).isEqualTo(user.getId());
+                });
+    }
+
+    @Test
     void createUserWithInvalidRoleReturnsBadRequest() throws Exception {
         mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -317,6 +348,30 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void updateUserWritesAuditLog() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+        String token = login("jdoe", "secret");
+
+        mockMvc.perform(post("/users/update/{userId}", user.getId())
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fullName": "Jane Doe"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.USER, user.getId()))
+                .anySatisfy(log -> {
+                    assertThat(log.getAction()).isEqualTo(AuditAction.UPDATE_USER);
+                    assertThat(log.getActor()).isEqualTo(ActorType.USER);
+                    assertThat(log.getPerformedBy().getId()).isEqualTo(user.getId());
+                });
+    }
+
+    @Test
     void deleteUserRemovesUser() throws Exception {
         User user = createUser("jdoe", "jdoe@example.com", "secret");
         String token = login("jdoe", "secret");
@@ -326,6 +381,25 @@ class IssueFlowApplicationTests {
                 .andExpect(status().isOk());
 
         assertThat(userRepository.findById(user.getId())).isEmpty();
+    }
+
+    @Test
+    void deleteUserWritesAuditLogWithoutBlockingDeletion() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+        String token = login("jdoe", "secret");
+
+        mockMvc.perform(delete("/users/{userId}", user.getId())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findById(user.getId())).isEmpty();
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.USER, user.getId()))
+                .anySatisfy(log -> {
+                    assertThat(log.getAction()).isEqualTo(AuditAction.DELETE_USER);
+                    assertThat(log.getActor()).isEqualTo(ActorType.USER);
+                    assertThat(log.getPerformedBy()).isNull();
+                });
     }
 
     @Test
@@ -591,6 +665,23 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void auditLogsCanFilterByCreateUserAction() throws Exception {
+        User user = createUser("jdoe", "jdoe@example.com", "secret");
+        String token = login("jdoe", "secret");
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("action", "CREATE_USER")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].entityType").value("USER"))
+                .andExpect(jsonPath("$[0].entityId").value(user.getId()))
+                .andExpect(jsonPath("$[0].action").value("CREATE_USER"))
+                .andExpect(jsonPath("$[0].actor").value("SYSTEM"))
+                .andExpect(jsonPath("$[0].performedBy").doesNotExist());
+    }
+
+    @Test
     void auditLogsCanFilterByActor() throws Exception {
         User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
         User developer = createUser("dev", "dev@example.com", "secret");
@@ -598,17 +689,20 @@ class IssueFlowApplicationTests {
         long projectId = createProject(token, admin.getId(), "Audit Actor Project");
         long ticketId = createTicket(token, projectId, null, "TODO");
 
-        mockMvc.perform(get("/audit-logs")
+        String response = mockMvc.perform(get("/audit-logs")
                         .param("actor", "SYSTEM")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].action").value("AUTO_ASSIGN"))
                 .andExpect(jsonPath("$[0].actor").value("SYSTEM"))
-                .andExpect(jsonPath("$[0].entityId").value(ticketId))
-                .andExpect(jsonPath("$[0].performedBy").doesNotExist());
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
 
         assertThat(developer.getId()).isNotNull();
+        assertThat(response)
+                .contains("\"action\":\"AUTO_ASSIGN\"")
+                .contains("\"entityId\":" + ticketId)
+                .doesNotContain("\"actor\":\"USER\"");
     }
 
     @Test

@@ -6,29 +6,29 @@ This file explains how to run, test, and manually validate the IssueFlow backend
 ## Table of Contents
 
 | Section | Description                       | 
-|--------|------------------------------------| 
-| 1      | Prerequisites                      |
-| 2      | Start PostgreSQL                   | 
-| 3      | Build the Project                  | 
-| 4      | Run Automated Tests                | 
-| 5      | Run the Application                |
-| 6      | Authentication Flow                |
-| 7      | Password Note                      | 
-| 8      | Environment Variables              | 
-| 9      | Manual Postman Test Artifacts      | 
-| 10     | General Postman Setup              | 
+|--------|-----------------------------------| 
+| 1      | Prerequisites                     |
+| 2      | Start PostgreSQL                  | 
+| 3      | Build the Project                 | 
+| 4      | Run Automated Tests               | 
+| 5      | Run the Application               |
+| 6      | Authentication Flow               |
+| 7      | Password Note                     | 
+| 8      | Environment Variables             | 
+| 9      | Manual Postman Test Artifacts     | 
+| 10     | General Postman Setup             | 
 | 11     | How to Use Each Postman Collection |
-| 11.1   | Manual Smoke Tests                 | 
-| 11.2   | Comments and Mentions Tests        |
-| 11.3   | Ticket Dependencies Tests          |
+| 11.1   | Manual Smoke Tests                | 
+| 11.2   | Comments and Mentions Tests       |
+| 11.3   | Ticket Dependencies Tests         |
 | 11.4   | Auto-Assignment and Workload Tests |
-| 11.5   | CSV Import/Export Tests            |
-| 11.6   | Attachmentes Tests                 |
-| 11.7   | Auto-Escalation Scheduler Tests    |
-| 11.8   | Audit Log API Tests                |
-| 11.9   | Final Smoke Regression Collection  |
-| 12     | Troubleshooting                    |
-| 13     | Additional Notes                   |
+| 11.5   | CSV Import/Export Tests           |
+| 11.6   | Attachments Tests                 |
+| 11.7   | Auto-Escalation Scheduler Tests   |
+| 11.8   | Audit Log API Tests               |
+| 11.9   | Final Smoke Regression Collection |
+| 12     | Troubleshooting                   |
+| 13     | Additional Notes                  |
 
 
 
@@ -44,7 +44,7 @@ Install:
 - Docker Desktop
 - Git
 - Postman
-- IntelliJ IDEA or another Java IDE
+- IntelliJ IDEA or another Java IDE (all the following was done via IntelliJ)
 
 Verify Java:
 
@@ -179,7 +179,7 @@ $env:JWT_EXPIRATION_SECONDS="3600"
 
 Manual test artifacts are stored under: manual-tests/
 
-detailed manual test documentation done by me are in: manual-tests/ReadMe.md
+detailed manual test documentation done by me are in: manual-tests/ReadMee.md
 
 
 ## 10. General Postman Setup
@@ -197,7 +197,7 @@ Then:
 3. Run the requests in order (Note that some of them might need some extra action which will be explained here later)
 4. If the collection has multipart file-upload, select the required file from: manual-tests/files/
 
-Most collections ue collection variables such as :
+Most collections use collection variables such as :
 
 baseUrl
 runId
@@ -368,7 +368,7 @@ docker compose up -d
 2. Import the collection into Postman
 3. Run the folder: Setup- create users/project/tickets via Postman
 4. IMPORTANT!!! wait at least 70 seconds after the setup finishes
-    The scheduler has a 60-seconds initial delay, so waiting gievs it time to run
+    The scheduler has a 60-seconds initial delay, so waiting gives it time to run
 5. Run the folder: Verification- wait before running 
 6. Make sure to wait another 70 seconds between the two requests there for optimal idempotency check before running the final request
 
@@ -399,6 +399,11 @@ Special notes:
 
 No helper files are required.
 The setup requests create project/ticket audit logs that are then queried.
+
+The Audit Log API also includes user/auth state-changing actions such as `CREATE_USER`, `UPDATE_USER`, `DELETE_USER`, and `LOGOUT`.
+it can be checked via IssueFlow_User_Auth_Audit_Completeness_Tests.postman_collection
+
+
 
 
 ### 11.9 IssueFlow_Final_Smoke_Regression.postman_collection.json
@@ -453,7 +458,8 @@ It is useful as one final manual sanity check before submission.
 
 Set JAVA_HOME and update Path in the current PowerShell session:
 
-$env:JAVA_HOME="C:\Users\yhona\.jdks\ms-21.0.11"
+For example: 
+$env:JAVA_HOME="C:\Users\Me\.jdks\ms-21.0.11"
 $env:Path="$env:JAVA_HOME\bin;$env:Path"
 java -version
 
@@ -472,7 +478,7 @@ Then stop the process if needed
 
 * Database contains old test data or Database has old enum/check-constraint values
 
-Rest the database via the following commands
+Reset the database via the following commands
 docker compose down -v
 docker compose up -d
 
@@ -496,4 +502,4 @@ The project validates using both:
 * Automated Maven integration/regression tests
 * manual Postman collections
 
-The details manual validation documentation is available in: manual-tests/ReadMe.md  
+The details manual validation documentation is available in: manual-tests/ReadMee.md  
