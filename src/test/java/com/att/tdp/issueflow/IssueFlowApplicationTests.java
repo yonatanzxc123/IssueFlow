@@ -19,6 +19,8 @@ import com.att.tdp.issueflow.domain.User;
 import com.att.tdp.issueflow.domain.enums.ActorType;
 import com.att.tdp.issueflow.domain.enums.AuditAction;
 import com.att.tdp.issueflow.domain.enums.AuditEntityType;
+import com.att.tdp.issueflow.domain.enums.TicketPriority;
+import com.att.tdp.issueflow.domain.enums.TicketStatus;
 import com.att.tdp.issueflow.repository.AttachmentRepository;
 import com.att.tdp.issueflow.repository.AuditLogRepository;
 import com.att.tdp.issueflow.repository.CommentRepository;
@@ -28,9 +30,11 @@ import com.att.tdp.issueflow.repository.RevokedTokenRepository;
 import com.att.tdp.issueflow.repository.TicketDependencyRepository;
 import com.att.tdp.issueflow.repository.TicketRepository;
 import com.att.tdp.issueflow.repository.UserRepository;
+import com.att.tdp.issueflow.service.TicketEscalationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.StringReader;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.apache.commons.csv.CSVFormat;
@@ -63,6 +67,7 @@ class IssueFlowApplicationTests {
     private final AuditLogRepository auditLogRepository;
     private final RevokedTokenRepository revokedTokenRepository;
     private final PasswordEncoder passwordEncoder;
+    private final TicketEscalationService ticketEscalationService;
 
     @Autowired
     IssueFlowApplicationTests(
@@ -77,7 +82,8 @@ class IssueFlowApplicationTests {
             TicketDependencyRepository ticketDependencyRepository,
             AuditLogRepository auditLogRepository,
             RevokedTokenRepository revokedTokenRepository,
-            PasswordEncoder passwordEncoder
+            PasswordEncoder passwordEncoder,
+            TicketEscalationService ticketEscalationService
     ) {
         this.mockMvc = mockMvc;
         this.objectMapper = objectMapper;
@@ -91,6 +97,7 @@ class IssueFlowApplicationTests {
         this.auditLogRepository = auditLogRepository;
         this.revokedTokenRepository = revokedTokenRepository;
         this.passwordEncoder = passwordEncoder;
+        this.ticketEscalationService = ticketEscalationService;
     }
 
     @BeforeEach
@@ -1215,6 +1222,154 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void overdueLowTicketBecomesMedium() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.LOW, TicketStatus.TODO, Instant.now().minusSeconds(60));
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isEqualTo(1);
+
+        Ticket escalated = ticketRepository.findById(ticket.getId()).orElseThrow();
+        assertThat(escalated.getPriority()).isEqualTo(TicketPriority.MEDIUM);
+        assertThat(escalated.isOverdue()).isFalse();
+    }
+
+    @Test
+    void overdueMediumTicketBecomesHigh() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.MEDIUM, TicketStatus.TODO, Instant.now().minusSeconds(60));
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isEqualTo(1);
+
+        assertThat(ticketRepository.findById(ticket.getId()).orElseThrow().getPriority()).isEqualTo(TicketPriority.HIGH);
+    }
+
+    @Test
+    void overdueHighTicketBecomesCritical() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.HIGH, TicketStatus.TODO, Instant.now().minusSeconds(60));
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isEqualTo(1);
+
+        Ticket escalated = ticketRepository.findById(ticket.getId()).orElseThrow();
+        assertThat(escalated.getPriority()).isEqualTo(TicketPriority.CRITICAL);
+        assertThat(escalated.isOverdue()).isTrue();
+    }
+
+    @Test
+    void overdueCriticalTicketSetsOverdueAndRepeatedEscalationIsIdempotent() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.CRITICAL, TicketStatus.TODO, Instant.now().minusSeconds(60));
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isEqualTo(1);
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isZero();
+
+        Ticket escalated = ticketRepository.findById(ticket.getId()).orElseThrow();
+        assertThat(escalated.getPriority()).isEqualTo(TicketPriority.CRITICAL);
+        assertThat(escalated.isOverdue()).isTrue();
+        assertThat(countAutoEscalateLogs(ticket.getId())).isEqualTo(1);
+    }
+
+    @Test
+    void doneTicketIsIgnoredByEscalation() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.LOW, TicketStatus.DONE, Instant.now().minusSeconds(60));
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isZero();
+
+        Ticket unchanged = ticketRepository.findById(ticket.getId()).orElseThrow();
+        assertThat(unchanged.getPriority()).isEqualTo(TicketPriority.LOW);
+        assertThat(unchanged.isOverdue()).isFalse();
+        assertThat(countAutoEscalateLogs(ticket.getId())).isZero();
+    }
+
+    @Test
+    void futureDueDateTicketIsIgnoredByEscalation() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.LOW, TicketStatus.TODO, Instant.now().plusSeconds(3600));
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isZero();
+
+        assertThat(ticketRepository.findById(ticket.getId()).orElseThrow().getPriority()).isEqualTo(TicketPriority.LOW);
+        assertThat(countAutoEscalateLogs(ticket.getId())).isZero();
+    }
+
+    @Test
+    void ticketWithoutDueDateIsIgnoredByEscalation() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.LOW, TicketStatus.TODO, null);
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isZero();
+
+        assertThat(ticketRepository.findById(ticket.getId()).orElseThrow().getPriority()).isEqualTo(TicketPriority.LOW);
+        assertThat(countAutoEscalateLogs(ticket.getId())).isZero();
+    }
+
+    @Test
+    void deletedTicketIsIgnoredByEscalation() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Deleted Escalation Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        configureTicketForEscalation(ticketId, TicketPriority.LOW, TicketStatus.TODO, Instant.now().minusSeconds(60), false);
+
+        mockMvc.perform(delete("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isZero();
+
+        Ticket unchanged = ticketRepository.findById(ticketId).orElseThrow();
+        assertThat(unchanged.getPriority()).isEqualTo(TicketPriority.LOW);
+        assertThat(unchanged.isOverdue()).isFalse();
+    }
+
+    @Test
+    void escalationDoesNotChangeTicketStatus() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.LOW, TicketStatus.IN_PROGRESS, Instant.now().minusSeconds(60));
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isEqualTo(1);
+
+        Ticket escalated = ticketRepository.findById(ticket.getId()).orElseThrow();
+        assertThat(escalated.getStatus()).isEqualTo(TicketStatus.IN_PROGRESS);
+        assertThat(escalated.getPriority()).isEqualTo(TicketPriority.MEDIUM);
+    }
+
+    @Test
+    void autoEscalateAuditLogIsWrittenOnlyWhenTicketChanges() throws Exception {
+        Ticket ticket = createEscalationTicket(TicketPriority.CRITICAL, TicketStatus.TODO, Instant.now().minusSeconds(60));
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isEqualTo(1);
+        assertThat(countAutoEscalateLogs(ticket.getId())).isEqualTo(1);
+
+        assertThat(ticketEscalationService.escalateOverdueTickets()).isZero();
+        assertThat(countAutoEscalateLogs(ticket.getId())).isEqualTo(1);
+
+        assertThat(auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.TICKET, ticket.getId()))
+                .anySatisfy(log -> {
+                    assertThat(log.getAction()).isEqualTo(AuditAction.AUTO_ESCALATE);
+                    assertThat(log.getActor()).isEqualTo(ActorType.SYSTEM);
+                    assertThat(log.getPerformedBy()).isNull();
+                });
+    }
+
+    @Test
+    void manualPatchPriorityChangeStillClearsOverdueFlag() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Manual Priority Clears Overdue Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        configureTicketForEscalation(ticketId, TicketPriority.CRITICAL, TicketStatus.TODO, Instant.now().minusSeconds(60), true);
+
+        mockMvc.perform(patch("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "priority": "HIGH"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        Ticket updated = ticketRepository.findById(ticketId).orElseThrow();
+        assertThat(updated.getPriority()).isEqualTo(TicketPriority.HIGH);
+        assertThat(updated.isOverdue()).isFalse();
+    }
+
+    @Test
     void exportTicketsReturnsCsvWithRequiredHeaderVisibleTicketsAndEscapedValues() throws Exception {
         User owner = createUser("owner", "owner@example.com", "secret");
         String token = login("owner", "secret");
@@ -1557,6 +1712,41 @@ class IssueFlowApplicationTests {
         assertThat(auditLogRepository
                 .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.ATTACHMENT, attachmentId))
                 .anySatisfy(log -> assertThat(log.getAction()).isEqualTo(AuditAction.DELETE_ATTACHMENT));
+    }
+
+    private Ticket createEscalationTicket(
+            TicketPriority priority,
+            TicketStatus status,
+            Instant dueDate
+    ) throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Escalation Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), status.name());
+        return configureTicketForEscalation(ticketId, priority, status, dueDate, false);
+    }
+
+    private Ticket configureTicketForEscalation(
+            Long ticketId,
+            TicketPriority priority,
+            TicketStatus status,
+            Instant dueDate,
+            boolean overdue
+    ) {
+        Ticket ticket = ticketRepository.findById(ticketId).orElseThrow();
+        ticket.setPriority(priority);
+        ticket.setStatus(status);
+        ticket.setDueDate(dueDate);
+        ticket.setOverdue(overdue);
+        return ticketRepository.saveAndFlush(ticket);
+    }
+
+    private long countAutoEscalateLogs(Long ticketId) {
+        return auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByTimestampDesc(AuditEntityType.TICKET, ticketId)
+                .stream()
+                .filter(log -> log.getAction() == AuditAction.AUTO_ESCALATE)
+                .count();
     }
 
     private MockMultipartFile csvFile(String content) {
