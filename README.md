@@ -1,6 +1,6 @@
 # IssueFlow
 
-IssueFlow is a Java 21 Spring Boot backend for a ticket-management platform, developed as part of the AT&T TDP backend assignment.
+IssueFlow is a Java 21 Spring Boot backend for a ticket-management platform
 
 This repository contains the backend implementation, automated tests, run instructions, implementation notes, and manual Postman validation artifacts.
 
