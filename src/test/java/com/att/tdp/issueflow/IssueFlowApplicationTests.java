@@ -369,6 +369,168 @@ class IssueFlowApplicationTests {
     }
 
     @Test
+    void auditLogsEndpointRequiresAuthentication() throws Exception {
+        mockMvc.perform(get("/audit-logs"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void auditLogsEndpointReturnsLogsNewestFirst() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Audit API Project");
+        Thread.sleep(10);
+
+        mockMvc.perform(patch("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Audit API Project Updated"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/audit-logs")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].action").value("UPDATE_PROJECT"))
+                .andExpect(jsonPath("$[1].action").value("CREATE_PROJECT"));
+    }
+
+    @Test
+    void auditLogsCanFilterByEntityType() throws Exception {
+        AuditFixture fixture = createAuditFixture();
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("entityType", "PROJECT")
+                        .header("Authorization", "Bearer " + fixture.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].entityType").value("PROJECT"));
+    }
+
+    @Test
+    void auditLogsCanFilterByEntityId() throws Exception {
+        AuditFixture fixture = createAuditFixture();
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("entityId", String.valueOf(fixture.ticketId()))
+                        .header("Authorization", "Bearer " + fixture.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].entityId").value(fixture.ticketId()));
+    }
+
+    @Test
+    void auditLogsCanFilterByAction() throws Exception {
+        AuditFixture fixture = createAuditFixture();
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("action", "CREATE_TICKET")
+                        .header("Authorization", "Bearer " + fixture.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].action").value("CREATE_TICKET"));
+    }
+
+    @Test
+    void auditLogsCanFilterByActor() throws Exception {
+        User admin = createUser("admin", "admin@example.com", "secret", "ADMIN");
+        User developer = createUser("dev", "dev@example.com", "secret");
+        String token = login("admin", "secret");
+        long projectId = createProject(token, admin.getId(), "Audit Actor Project");
+        long ticketId = createTicket(token, projectId, null, "TODO");
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("actor", "SYSTEM")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].action").value("AUTO_ASSIGN"))
+                .andExpect(jsonPath("$[0].actor").value("SYSTEM"))
+                .andExpect(jsonPath("$[0].entityId").value(ticketId))
+                .andExpect(jsonPath("$[0].performedBy").doesNotExist());
+
+        assertThat(developer.getId()).isNotNull();
+    }
+
+    @Test
+    void auditLogsCanApplyCombinedFilters() throws Exception {
+        AuditFixture fixture = createAuditFixture();
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("entityType", "TICKET")
+                        .param("entityId", String.valueOf(fixture.ticketId()))
+                        .param("action", "CREATE_TICKET")
+                        .param("actor", "USER")
+                        .header("Authorization", "Bearer " + fixture.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].entityType").value("TICKET"))
+                .andExpect(jsonPath("$[0].entityId").value(fixture.ticketId()))
+                .andExpect(jsonPath("$[0].action").value("CREATE_TICKET"))
+                .andExpect(jsonPath("$[0].actor").value("USER"));
+    }
+
+    @Test
+    void auditLogsInvalidEntityTypeReturnsBadRequest() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("entityType", "NOPE")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("Invalid entityType value")));
+    }
+
+    @Test
+    void auditLogsInvalidActionReturnsBadRequest() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("action", "NOPE")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("Invalid action value")));
+    }
+
+    @Test
+    void auditLogsInvalidActorReturnsBadRequest() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+
+        mockMvc.perform(get("/audit-logs")
+                        .param("actor", "NOPE")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("Invalid actor value")));
+    }
+
+    @Test
+    void auditLogsResponseUsesDtoShapeWithoutEntityInternals() throws Exception {
+        AuditFixture fixture = createAuditFixture();
+
+        String response = mockMvc.perform(get("/audit-logs")
+                        .param("action", "CREATE_PROJECT")
+                        .header("Authorization", "Bearer " + fixture.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").exists())
+                .andExpect(jsonPath("$[0].action").value("CREATE_PROJECT"))
+                .andExpect(jsonPath("$[0].entityType").value("PROJECT"))
+                .andExpect(jsonPath("$[0].performedBy").value(fixture.ownerId()))
+                .andExpect(jsonPath("$[0].actor").value("USER"))
+                .andExpect(jsonPath("$[0].timestamp").exists())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(response).doesNotContain("username", "email", "fullName", "passwordHash");
+    }
+
+    @Test
     void createTicketWithValidProjectSucceeds() throws Exception {
         User owner = createUser("owner", "owner@example.com", "secret");
         User assignee = createUser("dev", "dev@example.com", "secret");
@@ -1747,6 +1909,17 @@ class IssueFlowApplicationTests {
                 .stream()
                 .filter(log -> log.getAction() == AuditAction.AUTO_ESCALATE)
                 .count();
+    }
+
+    private AuditFixture createAuditFixture() throws Exception {
+        User owner = createUser("owner", "owner@example.com", "secret");
+        String token = login("owner", "secret");
+        long projectId = createProject(token, owner.getId(), "Audit Filter Project");
+        long ticketId = createTicket(token, projectId, owner.getId(), "TODO");
+        return new AuditFixture(token, owner.getId(), projectId, ticketId);
+    }
+
+    private record AuditFixture(String token, Long ownerId, Long projectId, Long ticketId) {
     }
 
     private MockMultipartFile csvFile(String content) {

@@ -5,9 +5,15 @@ import com.att.tdp.issueflow.domain.User;
 import com.att.tdp.issueflow.domain.enums.ActorType;
 import com.att.tdp.issueflow.domain.enums.AuditAction;
 import com.att.tdp.issueflow.domain.enums.AuditEntityType;
+import com.att.tdp.issueflow.exception.BadRequestException;
 import com.att.tdp.issueflow.repository.AuditLogRepository;
 import com.att.tdp.issueflow.repository.UserRepository;
 import com.att.tdp.issueflow.security.UserPrincipal;
+import com.att.tdp.issueflow.web.dto.response.AuditLogResponse;
+import com.att.tdp.issueflow.web.mapper.AuditLogMapper;
+import java.util.List;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -59,6 +65,26 @@ public class AuditLogService {
         recordAction(action, AuditEntityType.ATTACHMENT, attachmentId);
     }
 
+    @Transactional(readOnly = true)
+    public List<AuditLogResponse> getAuditLogs(
+            String entityType,
+            Long entityId,
+            String action,
+            String actor
+    ) {
+        AuditEntityType resolvedEntityType = parseEnum(entityType, AuditEntityType.class, "entityType");
+        AuditAction resolvedAction = parseEnum(action, AuditAction.class, "action");
+        ActorType resolvedActor = parseEnum(actor, ActorType.class, "actor");
+
+        return auditLogRepository.findAll(
+                        auditLogFilter(resolvedEntityType, entityId, resolvedAction, resolvedActor),
+                        Sort.by(Sort.Direction.DESC, "timestamp")
+                )
+                .stream()
+                .map(AuditLogMapper::toResponse)
+                .toList();
+    }
+
     private void recordAction(AuditAction action, AuditEntityType entityType, Long entityId) {
         recordAction(action, entityType, entityId, ActorType.USER, currentUserOrNull());
     }
@@ -77,6 +103,41 @@ public class AuditLogService {
         auditLog.setActor(actor);
         auditLog.setPerformedBy(performedBy);
         auditLogRepository.save(auditLog);
+    }
+
+    private Specification<AuditLog> auditLogFilter(
+            AuditEntityType entityType,
+            Long entityId,
+            AuditAction action,
+            ActorType actor
+    ) {
+        return (root, query, criteriaBuilder) -> {
+            var predicate = criteriaBuilder.conjunction();
+            if (entityType != null) {
+                predicate = criteriaBuilder.and(predicate, criteriaBuilder.equal(root.get("entityType"), entityType));
+            }
+            if (entityId != null) {
+                predicate = criteriaBuilder.and(predicate, criteriaBuilder.equal(root.get("entityId"), entityId));
+            }
+            if (action != null) {
+                predicate = criteriaBuilder.and(predicate, criteriaBuilder.equal(root.get("action"), action));
+            }
+            if (actor != null) {
+                predicate = criteriaBuilder.and(predicate, criteriaBuilder.equal(root.get("actor"), actor));
+            }
+            return predicate;
+        };
+    }
+
+    private <T extends Enum<T>> T parseEnum(String value, Class<T> enumType, String parameterName) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Enum.valueOf(enumType, value.trim());
+        } catch (IllegalArgumentException exception) {
+            throw new BadRequestException("Invalid " + parameterName + " value: " + value);
+        }
     }
 
     private User currentUserOrNull() {
