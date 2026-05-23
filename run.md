@@ -81,7 +81,7 @@ Via the IDE terminal from the project root write the following:
 
 .\mvnw.cmd clean test
 
-Note At the time of final regression validation, you should expect to see : 106 passed, 0 failures, 0 errors
+Note At the time of final regression validation, you should expect to see : 111 passed, 0 failures, 0 errors
 
 
 
